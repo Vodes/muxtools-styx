@@ -1,0 +1,34 @@
+
+[project]
+name = "muxtools-styx"
+version = "0.0.1"
+description = "Commandline Tool for the Styx backend/downloader using muxtools"
+authors = [{ name = "Vodes", email = "vodes.imp@gmail.com" }]
+dependencies = [
+    "muxtools>=0.0.9",
+]
+classifiers = [
+    "Natural Language :: English",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.10",
+    "Operating System :: OS Independent",
+    "Typing :: Typed",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Sound/Audio :: Conversion",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Multimedia :: Video :: Conversion",
+    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)",
+]
+requires-python = ">=3.10"
+readme = "README.md"
+license = { text = "MPL 2.0" }
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project.urls]
+"Source Code" = "https://github.com/Vodes/muxtools-styx"
+
+[project.scripts]
+muxtools-styx = "muxtools_styx:main"
