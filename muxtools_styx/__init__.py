@@ -1,8 +1,9 @@
+import time
 from argparse import ArgumentParser
 from pathlib import Path
 from muxtools import error, info, warn
 
-from .internals import basic_mux, single_file_mux
+from .internals import basic_mux, advanced_mux
 
 parser = ArgumentParser("muxtools-styx", description="Random CLI Tool based on muxtools used for the Styx backend.")
 parser.add_argument("--output", "-o", type=lambda st: Path(st).resolve(), required=True, help="Path for the file that will be output")
@@ -10,7 +11,7 @@ parser.add_argument("--verbose", "-v", action="store_true", help="Enable output 
 
 parser.add_argument("--keep-video", "-kv", action="store_true", help="Keep video track of first input")
 parser.add_argument("--keep-audio", "-ka", action="store_true", help="Keep audio tracks of first input")
-parser.add_argument("--best-audio", "-ba", action="store_true", help="Automatically determine best audio of both inputs and keep that")
+parser.add_argument("--best-audio", "-ba", action="store_true", help="Automatically determine best japanese audio of both inputs and keep that")
 parser.add_argument("--audio-sync", "-as", type=int, help="Delay to apply to audio tracks from first input in ms")
 parser.add_argument("--sub-sync", "-ss", type=int, help="Delay to apply to subtitle tracks from first input in ms")
 parser.add_argument("--discard-new-subs", "-discardsubs", action="store_true", help="Discard subtitle tracks of the second input")
@@ -42,13 +43,15 @@ def main():
         exit(1)
 
     if not any([args.best_audio, args.sushi_subs, args.tpp_subs, args.restyle_subs]) and len(args.input) > 1:
-        print("basic")
-        muxed = basic_mux(args.input[0], args.input[1], args)
+        muxed = basic_mux(args.input[0], args.input[1], args, args.output)
     elif len(args.input) == 1:
-        print("single")
-        muxed = single_file_mux(args.input[0], args)
+        muxed = advanced_mux(args.input[0], args)
     else:
-        exit(1)
+        output = Path(args.output)
+        premuxed = basic_mux(args.input[0], args.input[1], args, Path(f"{output.stem}.temp{output.suffix}"))
+        time.sleep(2)
+        muxed = advanced_mux(premuxed, args, args.input[0])
+        premuxed.unlink(True)
 
     if args.fix_tagging:
         warn("Tag fixing is not implemented yet.")

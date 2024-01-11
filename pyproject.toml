@@ -1,7 +1,7 @@
 
 [project]
 name = "muxtools-styx"
-version = "0.0.1"
+version = "0.0.2"
 description = "Commandline Tool for the Styx backend/downloader using muxtools"
 authors = [{ name = "Vodes", email = "vodes.imp@gmail.com" }]
 dependencies = [

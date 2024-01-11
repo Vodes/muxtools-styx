@@ -7,7 +7,7 @@ from muxtools.muxing.tracks import _track
 
 __all__ = [
     "basic_mux",
-    "single_file_mux",
+    "advanced_mux",
 ]
 
 
@@ -25,7 +25,7 @@ def is_lang(track: Track, lang: str) -> bool:
     return bool([l for l in languages if l.casefold() == lang.casefold()])
 
 
-def basic_mux(input1: Path, input2: Path, args: Namespace) -> Path:
+def basic_mux(input1: Path, input2: Path, args: Namespace, output: Path) -> Path:
     subs_to_keep = -1 if args.keep_subs else None
     if args.keep_non_english:
         non_english = find_tracks(input1, lang="eng", reverse_lang=True, type=TrackType.SUB)
@@ -47,15 +47,15 @@ def basic_mux(input1: Path, input2: Path, args: Namespace) -> Path:
         subtitles=None if args.discard_new_subs else -1,
         keep_attachments=not args.discard_new_subs,
     )
-    return Path(mux(mkv1, mkv2, outfile=args.output, quiet=not args.verbose))
+    return Path(mux(mkv1, mkv2, outfile=output, quiet=not args.verbose))
 
 
-def single_file_mux(input1: Path, args: Namespace) -> Path:
+def advanced_mux(input1: Path, args: Namespace, input2: Path | None = None) -> Path:
     Setup("Temp", None, clean_work_dirs=True)
     subtracks = list[tuple[SubFile, Track]]()
     fonts = list[FontFile]()
     all_subs = find_tracks(input1, type=TrackType.SUB)
-    to_process = [tr for tr in all_subs if bool([lan for lan in args.sub_languages if is_lang(tr, lan)])]
+    to_process = [tr for tr in all_subs if bool([lan for lan in args.sub_languages if is_lang(tr, lan)]) and (args.tpp_subs or args.restyle_subs)]
     other_subs = [tr for tr in all_subs if tr not in to_process]
 
     for pr in to_process:
@@ -68,12 +68,26 @@ def single_file_mux(input1: Path, args: Namespace) -> Path:
         subtracks.append((sub, pr))
 
     processed_tracks = [st.to_track(tr.title, tr.lang, str(tr.default).lower() == "yes", str(tr.forced).lower() == "yes") for (st, tr) in subtracks]
-    final_tracks = [Premux(input1, subtitles=None, keep_attachments=False), *processed_tracks]
+    final_tracks = [Premux(input1, subtitles=None, keep_attachments=False)]
+    if args.best_audio and input2:
+        non_jp_audio = find_tracks(input1, lang="jpn", type=TrackType.AUDIO, reverse_lang=True)
+        jp_audio1 = find_tracks(input1, lang="jpn", type=TrackType.AUDIO)
+        jp_audio2 = find_tracks(input2, lang="jpn", type=TrackType.AUDIO)
+        if jp_audio1 and jp_audio2:
+            final_tracks = [
+                Premux(input1, audio=None if not non_jp_audio else [tr.relative_id for tr in non_jp_audio], subtitles=None, keep_attachments=False)
+            ]
+            jp_audio1 = jp_audio1[0]
+            jp_audio2 = jp_audio2[0]
+            jp_audio = (
+                (input1, jp_audio1)
+                if int(jp_audio1.bit_rate or jp_audio1.fromstats_bitrate) > int(jp_audio2.bit_rate or jp_audio2.fromstats_bitrate)
+                else (input2, jp_audio2)
+            )
+            final_tracks.append(Premux(jp_audio[0], video=None, subtitles=None, keep_attachments=False, audio=jp_audio[1].relative_id))
+
+    final_tracks.extend(processed_tracks)
     if other_subs:
         final_tracks.append(Premux(input1, video=None, audio=None, subtitles=[tr.relative_id for tr in other_subs]))
     final_tracks.extend(fonts)
     return Path(mux(*final_tracks, outfile=args.output, quiet=not args.verbose, print_cli=True))
-
-
-def advanced_mux(input1: Path, input2: Path, args: Namespace) -> Path:
-    ...
