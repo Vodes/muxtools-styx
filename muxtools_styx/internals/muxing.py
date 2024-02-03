@@ -87,7 +87,6 @@ def advanced_mux(input1: Path, args: Namespace, input2: Path | None = None) -> P
             final_tracks.append(Premux(jp_audio[0], video=None, subtitles=None, keep_attachments=False, audio=jp_audio[1].relative_id))
 
     final_tracks.extend(processed_tracks)
-    if other_subs:
-        final_tracks.append(Premux(input1, video=None, audio=None, subtitles=[tr.relative_id for tr in other_subs]))
+    final_tracks.append(Premux(input1, video=None, audio=None, subtitles=[tr.relative_id for tr in other_subs] if other_subs else None))
     final_tracks.extend(fonts)
-    return Path(mux(*final_tracks, outfile=args.output, quiet=not args.verbose, print_cli=True))
+    return Path(mux(*final_tracks, outfile=args.output, quiet=not args.verbose))
