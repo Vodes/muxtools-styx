@@ -40,7 +40,10 @@ def basic_mux(input1: Path, input2: Path, args: Namespace, output: Path) -> Path
             sync_args.extend(get_sync_args(input1, args.audio_sync, -1, TrackType.AUDIO))
 
     subs_to_keep = subs_to_keep if not isinstance(subs_to_keep, list) else [int(track.relative_id) for track in subs_to_keep]
-    mkv1 = Premux(input1, -1 if args.keep_video else None, -1 if args.keep_audio else None, subs_to_keep, subs_to_keep != None, sync_args)
+    audio_to_keep = find_tracks(input1, lang="jpn", reverse_lang=True, type=TrackType.AUDIO)
+    if not audio_to_keep:
+        audio_to_keep = None
+    mkv1 = Premux(input1, -1 if args.keep_video else None, audio_to_keep if args.keep_audio else None, subs_to_keep, subs_to_keep != None, sync_args)
     mkv2 = Premux(
         input2,
         None if args.keep_video else -1,
