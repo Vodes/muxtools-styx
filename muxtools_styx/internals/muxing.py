@@ -99,6 +99,7 @@ def advanced_mux(input1: Path, args: Namespace, input2: Path | None = None) -> P
             preset = GJM_GANDHI_PRESET
             preset.append(edit_style(gandhi_default, "Sign"))
             sub = sub.unfuck_cr(alt_styles=["overlap"]).purge_macrons().restyle(preset)
+            replace_unknown_with_default(sub)
         fonts = sub.collect_fonts()
         subtracks.append((sub, pr))
 
@@ -135,3 +136,16 @@ def is_likely_sign(track: Track) -> bool:
     contains_sign_song = "sign" in title or "song" in title or "force" in title
 
     return hasForced or contains_sign_song
+
+
+def replace_unknown_with_default(sub: SubFile):
+    doc = sub._read_doc()
+    new_events = []
+    styles = doc.styles
+    stylenames = [str(style.name).casefold() for style in styles]
+    for line in doc.events:
+        if str(line.style).casefold() not in stylenames and line.TYPE == "Dialogue":
+            line.style = "Default"
+        new_events.append(line)
+    doc.events = new_events
+    sub._SubFile__update_doc(doc)
