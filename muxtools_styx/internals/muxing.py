@@ -45,7 +45,10 @@ def basic_mux(input1: Path, input2: Path, args: Namespace, output: Path) -> Path
         non_english = find_tracks(input1, lang="eng", reverse_lang=True, type=TrackType.SUB)
         subs_to_keep = None if not non_english else non_english
 
-    audio_to_keep = find_tracks(input1, lang="jpn", reverse_lang=True, type=TrackType.AUDIO) if args.keep_audio else None
+    if find_tracks(input2, lang="jpn", type=TrackType.AUDIO):
+        audio_to_keep = find_tracks(input1, lang="jpn", reverse_lang=True, type=TrackType.AUDIO) if args.keep_audio else None
+    else:
+        audio_to_keep = find_tracks(input1, type=TrackType.AUDIO) if args.keep_audio else None
 
     sync_args = ["--no-global-tags"]
     if args.sub_sync or args.audio_sync:
