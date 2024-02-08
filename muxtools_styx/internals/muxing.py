@@ -2,7 +2,21 @@ from argparse import Namespace
 from pathlib import Path
 from pymediainfo import Track
 
-from muxtools import Premux, get_track_list, TrackType, find_tracks, mux, SubTrack, Setup, SubFile, CABIN_PRESET, FontFile, warn
+from muxtools import (
+    Premux,
+    get_track_list,
+    TrackType,
+    find_tracks,
+    mux,
+    SubTrack,
+    Setup,
+    SubFile,
+    CABIN_PRESET,
+    FontFile,
+    warn,
+    edit_style,
+    cabin_default,
+)
 from muxtools.muxing.tracks import _track
 
 __all__ = [
@@ -66,7 +80,9 @@ def advanced_mux(input1: Path, args: Namespace, input2: Path | None = None) -> P
         if args.tpp_subs:
             warn("TPP not implemented yet...", sleep=1)
         if args.restyle_subs:
-            sub = sub.unfuck_cr(alt_styles=["overlap"]).purge_macrons().restyle(CABIN_PRESET)
+            preset = CABIN_PRESET
+            preset.append(edit_style(cabin_default, "Sign"))
+            sub = sub.unfuck_cr(alt_styles=["overlap"]).purge_macrons().restyle(preset)
         fonts = sub.collect_fonts()
         subtracks.append((sub, pr))
 
