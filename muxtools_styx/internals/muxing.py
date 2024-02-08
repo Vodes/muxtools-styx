@@ -57,6 +57,18 @@ def basic_mux(input1: Path, input2: Path, args: Namespace, output: Path) -> Path
     audio_to_keep = find_tracks(input1, lang="jpn", reverse_lang=True, type=TrackType.AUDIO)
     if not audio_to_keep:
         audio_to_keep = None
+    else:
+        languages = set([track.language for track in audio_to_keep])
+        for lang in languages:
+            subs = find_tracks(input1, lang=lang, type=TrackType.SUB)
+            subs = [sub for sub in subs if is_likely_sign(sub)]
+            if not subs:
+                continue
+
+            if not isinstance(subs_to_keep, list):
+                subs_to_keep = []
+            subs_to_keep.extend([int(sub.relative_id) for sub in subs if sub.relative_id not in subs_to_keep])
+
     mkv1 = Premux(input1, -1 if args.keep_video else None, audio_to_keep if args.keep_audio else None, subs_to_keep, subs_to_keep != None, sync_args)
     mkv2 = Premux(
         input2,
@@ -109,3 +121,11 @@ def advanced_mux(input1: Path, args: Namespace, input2: Path | None = None) -> P
     final_tracks.append(Premux(input1, video=None, audio=None, subtitles=[tr.relative_id for tr in other_subs] if other_subs else None))
     final_tracks.extend(fonts)
     return Path(mux(*final_tracks, outfile=args.output, quiet=not args.verbose))
+
+
+def is_likely_sign(track: Track) -> bool:
+    hasForced = str(track.forced).lower() == "yes"
+    title = str(track.title).lower()
+    contains_sign_song = "sign" in title or "song" in title or "force" in title
+
+    return hasForced or contains_sign_song

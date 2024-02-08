@@ -2,7 +2,7 @@ from pathlib import Path
 
 from pymediainfo import Track
 from muxtools import find_tracks, TrackType, get_executable, info, debug, error, run_commandline
-from .muxing import is_lang
+from .muxing import is_lang, is_likely_sign
 from shlex import join
 
 
@@ -59,11 +59,3 @@ def is_likely_full_en(track: Track) -> bool:
 
     if isenglish:
         return not hasForced and not contains_sign_song
-
-
-def is_likely_sign(track: Track) -> bool:
-    hasForced = str(track.forced).lower() == "yes"
-    title = str(track.title).lower()
-    contains_sign_song = "sign" in title or "song" in title or "force" in title
-
-    return hasForced or contains_sign_song
