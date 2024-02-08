@@ -11,11 +11,11 @@ from muxtools import (
     SubTrack,
     Setup,
     SubFile,
-    CABIN_PRESET,
+    GJM_GANDHI_PRESET,
     FontFile,
     warn,
     edit_style,
-    cabin_default,
+    gandhi_default,
 )
 from muxtools.muxing.tracks import _track
 
@@ -69,6 +69,7 @@ def basic_mux(input1: Path, input2: Path, args: Namespace, output: Path) -> Path
                 subs_to_keep = []
             subs_to_keep.extend([int(sub.relative_id) for sub in subs if sub.relative_id not in subs_to_keep])
 
+    audio_to_keep = audio_to_keep if not isinstance(audio_to_keep, list) else [int(track.relative_id) for track in audio_to_keep]
     mkv1 = Premux(input1, -1 if args.keep_video else None, audio_to_keep if args.keep_audio else None, subs_to_keep, subs_to_keep != None, sync_args)
     mkv2 = Premux(
         input2,
@@ -92,8 +93,8 @@ def advanced_mux(input1: Path, args: Namespace, input2: Path | None = None) -> P
         if args.tpp_subs:
             warn("TPP not implemented yet...", sleep=1)
         if args.restyle_subs:
-            preset = CABIN_PRESET
-            preset.append(edit_style(cabin_default, "Sign"))
+            preset = GJM_GANDHI_PRESET
+            preset.append(edit_style(gandhi_default, "Sign"))
             sub = sub.unfuck_cr(alt_styles=["overlap"]).purge_macrons().restyle(preset)
         fonts = sub.collect_fonts()
         subtracks.append((sub, pr))
