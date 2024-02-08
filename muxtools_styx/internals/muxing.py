@@ -142,10 +142,11 @@ def advanced_mux(input1: Path, args: Namespace, input2: Path | None = None) -> P
 
 def is_likely_sign(track: Track) -> bool:
     hasForced = str(track.forced).lower() == "yes"
+    isDefault = str(track.default).lower() == "yes"
     title = str(track.title).lower()
     contains_sign_song = "sign" in title or "song" in title or "force" in title
 
-    return hasForced or contains_sign_song
+    return (hasForced and not isDefault) or contains_sign_song
 
 
 def replace_unknown_with_default(sub: SubFile):
