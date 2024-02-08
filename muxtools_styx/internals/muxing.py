@@ -45,16 +45,19 @@ def basic_mux(input1: Path, input2: Path, args: Namespace, output: Path) -> Path
         non_english = find_tracks(input1, lang="eng", reverse_lang=True, type=TrackType.SUB)
         subs_to_keep = None if not non_english else non_english
 
+    audio_to_keep = find_tracks(input1, lang="jpn", reverse_lang=True, type=TrackType.AUDIO) if args.keep_audio else None
+
     sync_args = ["--no-global-tags"]
     if args.sub_sync or args.audio_sync:
         if args.sub_sync and subs_to_keep != None:
             absolute = [int(track.track_id) for track in subs_to_keep] if isinstance(subs_to_keep, list) else subs_to_keep
             sync_args.extend(get_sync_args(input1, args.sub_sync, absolute, TrackType.SUB))
-        if args.audio_sync and args.keep_audio:
-            sync_args.extend(get_sync_args(input1, args.audio_sync, -1, TrackType.AUDIO))
+        if args.audio_sync and audio_to_keep:
+            absolute = [int(track.track_id) for track in audio_to_keep]
+            sync_args.extend(get_sync_args(input1, args.audio_sync, absolute, TrackType.AUDIO))
 
     subs_to_keep = subs_to_keep if not isinstance(subs_to_keep, list) else [int(track.relative_id) for track in subs_to_keep]
-    audio_to_keep = find_tracks(input1, lang="jpn", reverse_lang=True, type=TrackType.AUDIO)
+
     if not audio_to_keep:
         audio_to_keep = None
     else:
@@ -70,7 +73,7 @@ def basic_mux(input1: Path, input2: Path, args: Namespace, output: Path) -> Path
             subs_to_keep.extend([int(sub.relative_id) for sub in subs if sub.relative_id not in subs_to_keep])
 
     audio_to_keep = audio_to_keep if not isinstance(audio_to_keep, list) else [int(track.relative_id) for track in audio_to_keep]
-    mkv1 = Premux(input1, -1 if args.keep_video else None, audio_to_keep if args.keep_audio else None, subs_to_keep, subs_to_keep != None, sync_args)
+    mkv1 = Premux(input1, -1 if args.keep_video else None, audio_to_keep, subs_to_keep, subs_to_keep != None, sync_args)
     mkv2 = Premux(
         input2,
         None if args.keep_video else -1,
