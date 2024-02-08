@@ -109,7 +109,7 @@ def advanced_mux(input1: Path, args: Namespace, input2: Path | None = None) -> P
                 .restyle(preset)
             )
             replace_unknown_with_default(sub)
-            exit(1)
+
         fonts = sub.collect_fonts()
         subtracks.append((sub, pr))
 
