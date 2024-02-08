@@ -52,10 +52,11 @@ def set_english(track: Track) -> Track:
 
 
 def is_likely_full_en(track: Track) -> bool:
-    isenglish = is_lang(track, "en") or is_lang(track, "jp")
+    isenglish = is_lang(track, "en") or is_lang(track, "jp") or is_lang(track, None)
     hasForced = str(track.forced).lower() == "yes"
+    isDefault = str(track.default).lower() == "yes"
     title = str(track.title).lower()
     contains_sign_song = "sign" in title or "song" in title or "force" in title
 
     if isenglish:
-        return not hasForced and not contains_sign_song
+        return (not hasForced or (hasForced and isDefault)) and not contains_sign_song

@@ -34,8 +34,10 @@ def get_sync_args(f: Path, sync: int, tracks: int | list[int], type: TrackType) 
     return args
 
 
-def is_lang(track: Track, lang: str) -> bool:
+def is_lang(track: Track, lang: str | None) -> bool:
     languages: list[str] = getattr(track, "other_language", None) or list[str]()
+    if (track.language == None or not languages) and lang == None:
+        return True
     return bool([l for l in languages if l.casefold() == lang.casefold()])
 
 
@@ -101,8 +103,13 @@ def advanced_mux(input1: Path, args: Namespace, input2: Path | None = None) -> P
         if args.restyle_subs:
             preset = GJM_GANDHI_PRESET
             preset.append(edit_style(gandhi_default, "Sign"))
-            sub = sub.unfuck_cr(alt_styles=["overlap"]).purge_macrons().restyle(preset)
+            sub = (
+                sub.unfuck_cr(alt_styles=["overlap", "subtitle-2"], dialogue_styles=["main", "default", "narrator", "narration", "subtitle"])
+                .purge_macrons()
+                .restyle(preset)
+            )
             replace_unknown_with_default(sub)
+            exit(1)
         fonts = sub.collect_fonts()
         subtracks.append((sub, pr))
 
