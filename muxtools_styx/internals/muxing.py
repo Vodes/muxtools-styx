@@ -99,7 +99,9 @@ def advanced_mux(input1: Path, args: Namespace, input2: Path | None = None) -> P
         fonts = sub.collect_fonts()
         subtracks.append((sub, pr))
 
-    processed_tracks = [st.to_track(tr.title, tr.lang, str(tr.default).lower() == "yes", str(tr.forced).lower() == "yes") for (st, tr) in subtracks]
+    processed_tracks = [
+        st.to_track(tr.title, tr.language, str(tr.default).lower() == "yes", str(tr.forced).lower() == "yes") for (st, tr) in subtracks
+    ]
     final_tracks = [Premux(input1, subtitles=None, keep_attachments=False)]
     if args.best_audio and input2:
         non_jp_audio = find_tracks(input1, lang="jpn", type=TrackType.AUDIO, reverse_lang=True)
