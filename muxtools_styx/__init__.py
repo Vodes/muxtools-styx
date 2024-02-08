@@ -3,7 +3,7 @@ from argparse import ArgumentParser
 from pathlib import Path
 from muxtools import error, info, warn
 
-from .internals import basic_mux, advanced_mux
+from .internals import basic_mux, advanced_mux, fix_tags
 
 parser = ArgumentParser("muxtools-styx", description="Random CLI Tool based on muxtools used for the Styx backend.")
 parser.add_argument("--output", "-o", type=lambda st: Path(st).resolve(), required=True, help="Path for the file that will be output")
@@ -45,7 +45,10 @@ def main():
     if not any([args.best_audio, args.sushi_subs, args.tpp_subs, args.restyle_subs]) and len(args.input) > 1:
         muxed = basic_mux(args.input[0], args.input[1], args, args.output)
     elif len(args.input) == 1:
-        muxed = advanced_mux(args.input[0], args)
+        if any([args.tpp_subs, args.sushi_subs, args.restyle_subs]):
+            muxed = advanced_mux(args.input[0], args)
+        else:
+            muxed = args.input[0]
     else:
         output = Path(args.output)
         premuxed = basic_mux(args.input[0], args.input[1], args, Path(f"{output.stem}.temp{output.suffix}"))
@@ -54,6 +57,6 @@ def main():
         premuxed.unlink(True)
 
     if args.fix_tagging:
-        warn("Tag fixing is not implemented yet.")
+        fix_tags(muxed)
 
     print(f"Output: {muxed.resolve()}")
