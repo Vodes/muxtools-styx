@@ -142,10 +142,11 @@ def replace_unknown_with_default(sub: SubFile):
     doc = sub._read_doc()
     new_events = []
     styles = doc.styles
-    stylenames = [str(style.name).casefold() for style in styles]
+    stylenames = [str(style.name) for style in styles]
     for line in doc.events:
-        if str(line.style).casefold() not in stylenames and line.TYPE == "Dialogue":
+        if str(line.style) not in stylenames and line.TYPE == "Dialogue":
             line.style = "Default"
         new_events.append(line)
     doc.events = new_events
+
     sub._SubFile__update_doc(doc)
