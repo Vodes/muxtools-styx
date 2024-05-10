@@ -4,11 +4,9 @@ from pymediainfo import Track
 
 from muxtools import (
     Premux,
-    get_track_list,
     TrackType,
     find_tracks,
     mux,
-    SubTrack,
     Setup,
     SubFile,
     GJM_GANDHI_PRESET,
@@ -17,7 +15,7 @@ from muxtools import (
     edit_style,
     gandhi_default,
 )
-from muxtools.muxing.tracks import _track
+from muxtools.subtitle.sub import LINES
 
 __all__ = [
     "basic_mux",
@@ -162,4 +160,4 @@ def replace_unknown_with_default(sub: SubFile):
         new_events.append(line)
     doc.events = new_events
 
-    sub._SubFile__update_doc(doc)
+    sub._update_doc(doc)

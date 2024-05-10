@@ -1,7 +1,7 @@
 import time
 from argparse import ArgumentParser
 from pathlib import Path
-from muxtools import error, info, warn
+from muxtools import error
 
 from .internals import basic_mux, advanced_mux, fix_tags
 

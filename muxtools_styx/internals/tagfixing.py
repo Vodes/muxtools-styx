@@ -1,9 +1,8 @@
 from pathlib import Path
 
 from pymediainfo import Track
-from muxtools import find_tracks, TrackType, get_executable, info, debug, error, run_commandline
+from muxtools import find_tracks, TrackType, get_executable, run_commandline
 from .muxing import is_lang, is_likely_sign
-from shlex import join
 
 
 def fix_tags(fil: Path):
@@ -31,17 +30,17 @@ def fix_tags(fil: Path):
     for sub in signs:
         print(f"Some signs track: {sub.title}")
         commands.extend(["--edit", f"track:{sub.track_id + 1}"])
-        commands.extend(["--set", "flag-forced=1", "--set", f"flag-default=0"])
+        commands.extend(["--set", "flag-forced=1", "--set", "flag-default=0"])
 
     for sub in [track for track in otherNonJP if track.relative_id not in [track.relative_id for track in signs]]:
         print(f"Full sub other languages: {sub.title}")
         commands.extend(["--edit", f"track:{sub.track_id + 1}"])
-        commands.extend(["--set", "flag-forced=0", "--set", f"flag-default=1"])
+        commands.extend(["--set", "flag-forced=0", "--set", "flag-default=1"])
 
     for audio in audio_tracks:
         print(f"Audio: {audio.title}")
         commands.extend(["--edit", f"track:{audio.track_id + 1}"])
-        commands.extend(["--set", "flag-forced=0", "--set", f"flag-default=1"])
+        commands.extend(["--set", "flag-forced=0", "--set", "flag-default=1"])
 
     run_commandline(commands)
 
