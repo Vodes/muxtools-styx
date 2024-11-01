@@ -104,7 +104,7 @@ def advanced_mux(input1: Path, args: Namespace, input2: Path | None = None) -> P
             preset.append(edit_style(gandhi_default, "Subtitle"))
             preset.append(edit_style(gandhi_default, "Subtitle-3", fontsize=66))
             sub = (
-                sub.unfuck_cr(alt_styles=["overlap", "subtitle-2"], dialogue_styles=["main", "default", "narrator", "narration", "subtitle"])
+                sub.unfuck_cr(alt_styles=["overlap", "subtitle-2"], dialogue_styles=["main", "default", "narrator", "narration", "subtitle", "bd dx"])
                 .purge_macrons()
                 .restyle(preset)
             )
