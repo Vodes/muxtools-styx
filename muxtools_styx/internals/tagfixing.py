@@ -59,3 +59,8 @@ def is_likely_full_en(track: Track) -> bool:
 
     if isenglish:
         return (not hasForced or (hasForced and isDefault)) and not contains_sign_song
+
+
+def set_mkv_title(fileIn: Path, title: str):
+    mkvpropedit = get_executable("mkvpropedit", False)
+    run_commandline([mkvpropedit, str(fileIn.resolve()), "--edit", "info", "--set", f"title={title}"])
