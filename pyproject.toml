@@ -1,11 +1,12 @@
-
 [project]
 name = "muxtools-styx"
-version = "0.2.0"
+version = "0.3.0"
 description = "Commandline Tool for the Styx backend/downloader using muxtools"
 authors = [{ name = "Vodes", email = "vodes.imp@gmail.com" }]
 dependencies = [
-    "muxtools>=0.2.1",
+    "muxtools",
+    "click>=8.1,<9.0",
+    "anitopy>=2.1.1",
 ]
 classifiers = [
     "Natural Language :: English",
@@ -24,11 +25,22 @@ readme = "README.md"
 license = { text = "MPL 2.0" }
 
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
 
 [project.urls]
 "Source Code" = "https://github.com/Vodes/muxtools-styx"
 
 [project.scripts]
-muxtools-styx = "muxtools_styx:main"
+muxtools-styx = "muxtools_styx.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/muxtools_styx"]
+
+[tool.uv.sources]
+muxtools = { git = "https://github.com/Jaded-Encoding-Thaumaturgy/muxtools" }
