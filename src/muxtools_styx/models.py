@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any
 
-TrackKind = Literal["video", "audio", "subtitle", "attachment", "chapters", "mkv", "unknown"]
+from muxtools import TrackType
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,56 +30,75 @@ class EpisodeKey:
         }
 
 
-@dataclass(frozen=True, slots=True)
-class TrackInfo:
-    index: int
-    relative_index: int
-    kind: TrackKind
-    codec_name: str
-    codec_long_name: str | None = None
-    bit_rate: int | None = None
-    language: str | None = None
-    title: str | None = None
-    is_default: bool = False
-    is_forced: bool = False
-    container_delay: int = 0
+TRACK_KIND_MAP = {
+    TrackType.VIDEO: "video",
+    TrackType.AUDIO: "audio",
+    TrackType.SUB: "subtitle",
+    TrackType.ATTACHMENT: "attachment",
+    TrackType.CHAPTERS: "chapters",
+    TrackType.MKV: "mkv",
+}
 
-    def to_dict(self) -> dict[str, object]:
-        return {
-            "index": self.index,
-            "relative_index": self.relative_index,
-            "kind": self.kind,
-            "codec_name": self.codec_name,
-            "codec_long_name": self.codec_long_name,
-            "bit_rate": self.bit_rate,
-            "language": self.language,
-            "title": self.title,
-            "is_default": self.is_default,
-            "is_forced": self.is_forced,
-            "container_delay": self.container_delay,
-        }
+
+def track_language(track: object) -> str | None:
+    sanitized = getattr(track, "sanitized_lang", None)
+    if sanitized is not None:
+        tag = sanitized.to_tag()
+        return None if tag == "und" else tag
+
+    language = getattr(track, "language", None)
+    return language if language else None
+
+
+def track_bitrate(track: object) -> int | None:
+    if (bit_rate := getattr(track, "bit_rate", None)) is not None:
+        return bit_rate
+
+    raw_ffprobe = getattr(track, "raw_ffprobe", None)
+    raw_bit_rate = getattr(raw_ffprobe, "bit_rate", None)
+    if isinstance(raw_bit_rate, int):
+        return raw_bit_rate
+    if isinstance(raw_bit_rate, str) and raw_bit_rate.isdigit():
+        return int(raw_bit_rate)
+    return None
+
+
+def track_to_dict(track: object) -> dict[str, object]:
+    return {
+        "index": getattr(track, "index"),
+        "relative_index": getattr(track, "relative_index"),
+        "kind": TRACK_KIND_MAP.get(getattr(track, "type", None), "unknown"),
+        "codec_name": getattr(track, "codec_name"),
+        "codec_long_name": getattr(track, "codec_long_name", None),
+        "bit_rate": track_bitrate(track),
+        "language": track_language(track),
+        "title": getattr(track, "title", None),
+        "is_default": getattr(track, "is_default", False),
+        "is_forced": getattr(track, "is_forced", False),
+        "container_delay": getattr(track, "container_delay", 0),
+    }
 
 
 @dataclass(slots=True)
 class SourceFile:
     path: Path
-    tracks: list[TrackInfo] = field(default_factory=list)
+    tracks: list[object] = field(default_factory=list)
     episode: EpisodeKey | None = None
     container_format: str | None = None
     container_title: str | None = None
     is_video_file: bool = True
 
     @property
-    def video_tracks(self) -> list[TrackInfo]:
-        return [track for track in self.tracks if track.kind == "video"]
+    def video_tracks(self) -> list[object]:
+        return [track for track in self.tracks if getattr(track, "type", None) == TrackType.VIDEO]
 
     @property
-    def audio_tracks(self) -> list[TrackInfo]:
-        return [track for track in self.tracks if track.kind == "audio"]
+    def audio_tracks(self) -> list[object]:
+        return [track for track in self.tracks if getattr(track, "type", None) == TrackType.AUDIO]
 
     @property
-    def subtitle_tracks(self) -> list[TrackInfo]:
-        return [track for track in self.tracks if track.kind == "subtitle"]
+    def subtitle_tracks(self) -> list[object]:
+        return [track for track in self.tracks if getattr(track, "type", None) == TrackType.SUB]
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -88,18 +107,18 @@ class SourceFile:
             "container_format": self.container_format,
             "container_title": self.container_title,
             "is_video_file": self.is_video_file,
-            "tracks": [track.to_dict() for track in self.tracks],
+            "tracks": [track_to_dict(track) for track in self.tracks],
         }
 
 
 @dataclass(frozen=True, slots=True)
 class TrackRef:
     source: Path
-    track: TrackInfo
+    track: object
     reason: str
 
     def to_dict(self) -> dict[str, object]:
-        data = self.track.to_dict()
+        data = track_to_dict(self.track)
         data["source"] = str(self.source)
         data["reason"] = self.reason
         return data
@@ -146,6 +165,21 @@ class SubtitleTransform:
 
 
 @dataclass(slots=True)
+class SingleTransformOptions:
+    restyle_subs: bool = False
+    restyle_languages: list[str] | None = None
+
+    def is_active(self) -> bool:
+        return self.restyle_subs
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "restyle_subs": self.restyle_subs,
+            "restyle_languages": self.restyle_languages,
+        }
+
+
+@dataclass(slots=True)
 class MuxPlan:
     mode: str
     output: Path
@@ -155,6 +189,8 @@ class MuxPlan:
     source_args: dict[str, list[str]] = field(default_factory=dict)
     mkv_title: str | None = None
     fix_tags: bool = False
+    post_mux_single: SingleTransformOptions | None = None
+    direct_postprocess_source: Path | None = None
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -167,6 +203,8 @@ class MuxPlan:
             "source_args": self.source_args,
             "mkv_title": self.mkv_title,
             "fix_tags": self.fix_tags,
+            "post_mux_single": None if self.post_mux_single is None else self.post_mux_single.to_dict(),
+            "direct_postprocess_source": None if self.direct_postprocess_source is None else str(self.direct_postprocess_source),
             "notes": self.notes,
         }
 

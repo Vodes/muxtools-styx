@@ -5,9 +5,10 @@ from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
-from muxtools import ParsedFile, Premux, Setup, SubFile, TrackType, mux
+from muxtools import FontFile, ParsedFile, Premux, Setup, SubFile, TrackType, mux
 
 from muxtools_styx.cli import app
+from muxtools_styx.models import track_language
 from muxtools_styx.postprocess import apply_metadata_postprocess
 from muxtools_styx.planner import inspect_path
 
@@ -17,8 +18,8 @@ SAMPLE_DIR = TEST_DATA_DIR / "sample-files"
 INPUT_DIR = TEST_DATA_DIR / "input"
 
 pytestmark = pytest.mark.skipif(
-    not SAMPLE_DIR.exists() or not shutil.which("ffprobe") or not shutil.which("mkvmerge"),
-    reason="Requires checked-out test-data plus ffprobe and mkvmerge on PATH.",
+    not SAMPLE_DIR.exists() or not shutil.which("ffprobe") or not shutil.which("mkvmerge") or not shutil.which("mkvextract"),
+    reason="Requires checked-out test-data plus ffprobe/mkvmerge/mkvextract on PATH.",
 )
 
 
@@ -47,7 +48,85 @@ def test_pair_execute_sets_requested_mkv_title(tmp_path: Path) -> None:
 
     parsed = inspect_path(output)
     assert parsed.container_title == "Styx Integration Test"
-    assert [track.language for track in parsed.audio_tracks] == ["ja", "en", "de"]
+    assert [track_language(track) for track in parsed.audio_tracks] == ["ja", "en", "de"]
+
+
+def test_pair_execute_remove_unnecessary_filters_during_initial_merge(tmp_path: Path) -> None:
+    donor = SAMPLE_DIR / "H265-Opus-AAC-sample.mkv"
+    target = SAMPLE_DIR / "H264-10bit-FLAC-sample.mkv"
+    output = tmp_path / "pair-filtered-output.mkv"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "pair",
+            str(donor),
+            str(target),
+            "-o",
+            str(output),
+            "--keep-audio",
+            "--remove-unnecessary",
+            "--audio-language",
+            "en",
+            "--sub-language",
+            "en",
+            "--execute",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    parsed = inspect_path(output)
+    assert [track_language(track) for track in parsed.audio_tracks] == ["en"]
+
+
+def test_pair_execute_can_run_single_style_post_mux_restyle(tmp_path: Path) -> None:
+    setup = Setup("pair-restyle-source", None, allow_binary_download=False, out_dir=str(tmp_path), work_dir=str(tmp_path / "_workdir_pair_src"), debug=False)
+    setup.edit("mkv_title_naming", "")
+    setup.edit("skip_mux_branding", True)
+
+    donor = SAMPLE_DIR / "H265-Opus-AAC-sample.mkv"
+    target = SAMPLE_DIR / "H264-10bit-FLAC-sample.mkv"
+    full_sub = INPUT_DIR / "vigilantes_s01e01_en.ass"
+    target_with_sub = tmp_path / "pair-target-with-sub.mkv"
+    output = tmp_path / "pair-restyled-output.mkv"
+
+    mux(
+        Premux(target, subtitles=None, keep_attachments=False),
+        SubFile(full_sub).to_track("English Full Subtitles", "en", default=True, forced=False),
+        outfile=target_with_sub,
+        quiet=True,
+        print_cli=False,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "pair",
+            str(donor),
+            str(target_with_sub),
+            "-o",
+            str(output),
+            "--keep-audio",
+            "--restyle-subs",
+            "--restyle-language",
+            "en",
+            "--execute",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+
+    parsed = inspect_path(output)
+    assert [track_language(track) for track in parsed.audio_tracks] == ["ja", "en", "de"]
+
+    extracted = SubFile.from_mkv(output, 0)
+    expected = SubFile(TEST_DATA_DIR / "output" / "vigilantes_s01e01_en_unfuck_cr_restyled.ass")
+
+    extracted_doc = extracted._read_doc()
+    expected_doc = expected._read_doc()
+
+    for style_ac, style_ex in zip(extracted_doc.styles, expected_doc.styles, strict=True):
+        assert style_ac.name == style_ex.name
 
 
 def test_fix_tags_postprocess_updates_real_audio_and_subtitle_flags(tmp_path: Path) -> None:
@@ -113,7 +192,31 @@ def test_single_execute_remove_unnecessary_filters_real_tracks(tmp_path: Path) -
     assert result.exit_code == 0, result.output
     parsed = inspect_path(output)
     assert len(parsed.video_tracks) == 1
-    assert [track.language for track in parsed.audio_tracks] == ["en"]
+    assert [track_language(track) for track in parsed.audio_tracks] == ["en"]
+
+
+def test_single_execute_metadata_only_edits_source_in_place_by_default(tmp_path: Path) -> None:
+    source = tmp_path / "single-propedit-source.mkv"
+    shutil.copy2(SAMPLE_DIR / "H264-10bit-FLAC-sample.mkv", source)
+    default_output = source.with_name(f"{source.stem}.styx{source.suffix}")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "single",
+            str(source),
+            "--fix-tags",
+            "--mkv-title",
+            "In Place Title",
+            "--execute",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert not default_output.exists()
+
+    parsed = inspect_path(source)
+    assert parsed.container_title == "In Place Title"
 
 
 def test_single_execute_restyles_real_subtitles(tmp_path: Path) -> None:
@@ -215,3 +318,63 @@ def test_single_execute_restyle_does_not_double_apply_subtitle_delay(tmp_path: P
 
     assert restyled_first.start == original_first.start
     assert subtitle_track.container_delay == original_track.container_delay
+
+
+def test_single_execute_restyle_deduplicates_collected_fonts(tmp_path: Path) -> None:
+    setup = Setup("single-restyle-fonts-source", None, allow_binary_download=False, out_dir=str(tmp_path), work_dir=str(tmp_path / "_workdir_fonts_src"), debug=False)
+    setup.edit("mkv_title_naming", "")
+    setup.edit("skip_mux_branding", True)
+
+    source = SAMPLE_DIR / "H264-10bit-FLAC-sample.mkv"
+    full_sub = INPUT_DIR / "vigilantes_s01e01_en.ass"
+    intermediate = tmp_path / "single-restyle-fonts-source.mkv"
+    output = tmp_path / "single-restyle-fonts-output.mkv"
+    seed_sub = SubFile(full_sub)
+    collected_fonts = seed_sub.collect_fonts(search_current_dir=False)
+    original_font_names = {font.file.name for font in collected_fonts}
+    renamed_fonts = []
+    renamed_font_names = set[str]()
+    for index, font in enumerate(collected_fonts, start=1):
+        renamed_path = tmp_path / f"release-font-{index}{font.file.suffix.lower()}"
+        shutil.copy(font.file, renamed_path)
+        renamed_fonts.append(FontFile(renamed_path))
+        renamed_font_names.add(renamed_path.name)
+
+    mux(
+        Premux(source, subtitles=None, keep_attachments=False),
+        seed_sub.to_track("English One", "en", default=True, forced=False),
+        SubFile(full_sub).to_track("English Two", "en", default=False, forced=False),
+        *renamed_fonts,
+        outfile=intermediate,
+        quiet=True,
+        print_cli=False,
+    )
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "single",
+            str(intermediate),
+            "-o",
+            str(output),
+            "--restyle-subs",
+            "--restyle-language",
+            "en",
+            "--execute",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+
+    parsed = ParsedFile.from_file(output)
+    attachment_tracks = [track for track in parsed.tracks if track.type == TrackType.ATTACHMENT]
+    attachment_filenames = [
+        next(tag.value for tag in track.raw_ffprobe.tags.tag if tag.key == "filename")
+        for track in attachment_tracks
+        if track.raw_ffprobe.tags and track.raw_ffprobe.tags.tag
+    ]
+
+    assert attachment_filenames
+    assert len(attachment_filenames) == len(set(attachment_filenames))
+    assert renamed_font_names.isdisjoint(set(attachment_filenames))
+    assert original_font_names & set(attachment_filenames)

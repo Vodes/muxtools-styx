@@ -3,9 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from .matching import match_episode_paths, parse_episode_key, scan_media_files
-from .models import BatchPlan, MuxPlan, SelectionPlan, SourceFile, SubtitleTransform, TrackRef
+from .models import BatchPlan, MuxPlan, SelectionPlan, SingleTransformOptions, SourceFile, SubtitleTransform, TrackRef, track_language
 from .muxtools_adapter import inspect_source
-from .rules import choose_best_japanese_audio, choose_donor_audio_tracks, choose_donor_sign_subtitles
+from .rules import choose_best_japanese_audio, choose_donor_audio_tracks, choose_donor_sign_subtitles, choose_donor_subtitles_missing_languages
 
 
 def default_output_path(target: Path, output: Path | None = None) -> Path:
@@ -13,6 +13,18 @@ def default_output_path(target: Path, output: Path | None = None) -> Path:
         return output.resolve()
     suffix = target.suffix or ".mkv"
     return target.with_name(f"{target.stem}.styx{suffix}").resolve()
+
+
+def build_single_transform_options(
+    *,
+    restyle_subs: bool = False,
+    restyle_languages: list[str] | None = None,
+) -> SingleTransformOptions | None:
+    options = SingleTransformOptions(
+        restyle_subs=restyle_subs,
+        restyle_languages=restyle_languages,
+    )
+    return options if options.is_active() else None
 
 
 def plan_pair(
@@ -27,17 +39,25 @@ def plan_pair(
     sub_sync: int | None = None,
     discard_new_subs: bool = False,
     keep_subs: bool = False,
+    keep_subs_missing_languages: bool = False,
     keep_non_english: bool = False,
     mkv_title: str | None = None,
     fix_tags: bool = False,
+    remove_unnecessary: bool = False,
+    audio_languages: list[str] | None = None,
+    sub_languages: list[str] | None = None,
+    restyle_subs: bool = False,
+    restyle_languages: list[str] | None = None,
 ) -> MuxPlan:
+    keep_audio_languages = set(audio_languages or ["de", "en", "ja"])
+    keep_sub_languages = set(sub_languages or ["de", "en"])
     selected_video_source = donor if keep_video else target
 
     donor_audio_tracks = choose_donor_audio_tracks(donor, target) if keep_audio else []
     target_audio_tracks = target.audio_tracks.copy()
     if best_audio:
-        target_audio_tracks = [track for track in target_audio_tracks if track.language != "ja"]
-        donor_audio_tracks = [track for track in donor_audio_tracks if track.language != "ja"]
+        target_audio_tracks = [track for track in target_audio_tracks if track_language(track) != "ja"]
+        donor_audio_tracks = [track for track in donor_audio_tracks if track_language(track) != "ja"]
         if best_japanese_audio := choose_best_japanese_audio(donor, target):
             best_source, best_track = best_japanese_audio
             if best_source.path == donor.path:
@@ -45,15 +65,22 @@ def plan_pair(
             else:
                 target_audio_tracks.append(best_track)
 
-    donor_languages = {track.language for track in donor_audio_tracks}
+    donor_languages = {track_language(track) for track in donor_audio_tracks}
     donor_sign_tracks = choose_donor_sign_subtitles(donor, donor_languages)
     donor_subtitle_tracks = donor_sign_tracks
     if keep_subs:
         donor_subtitle_tracks = donor.subtitle_tracks.copy()
+    elif keep_subs_missing_languages:
+        donor_subtitle_tracks = _unique_tracks(donor_sign_tracks + choose_donor_subtitles_missing_languages(donor, target))
     elif keep_non_english:
-        donor_subtitle_tracks = [track for track in donor.subtitle_tracks if track.language != "en"]
+        donor_subtitle_tracks = [track for track in donor.subtitle_tracks if track_language(track) != "en"]
 
     target_subtitle_tracks = [] if discard_new_subs else target.subtitle_tracks.copy()
+    if remove_unnecessary:
+        donor_audio_tracks = [track for track in donor_audio_tracks if track_language(track) in keep_audio_languages]
+        target_audio_tracks = [track for track in target_audio_tracks if track_language(track) in keep_audio_languages]
+        donor_subtitle_tracks = [track for track in donor_subtitle_tracks if track_language(track) in keep_sub_languages]
+        target_subtitle_tracks = [track for track in target_subtitle_tracks if track_language(track) in keep_sub_languages]
     source_args = dict[str, list[str]]()
     if audio_sync and donor_audio_tracks:
         source_args.setdefault(str(donor.path), []).extend(_build_sync_args(donor_audio_tracks, audio_sync))
@@ -84,6 +111,14 @@ def plan_pair(
     ]
     if donor.episode and target.episode:
         notes.append(f"Matched episode {target.episode.label()}.")
+    if remove_unnecessary:
+        notes.append("Track filtering is enabled during the initial merge.")
+    post_mux_single = build_single_transform_options(
+        restyle_subs=restyle_subs,
+        restyle_languages=restyle_languages,
+    )
+    if post_mux_single is not None:
+        notes.append("Single-file transforms will run on the merged output in a second pass.")
 
     return MuxPlan(
         mode="pair",
@@ -94,6 +129,7 @@ def plan_pair(
         source_args=source_args,
         mkv_title=mkv_title,
         fix_tags=fix_tags,
+        post_mux_single=post_mux_single,
         notes=notes,
     )
 
@@ -117,31 +153,32 @@ def plan_single(
     selected_audio = source.audio_tracks
     selected_subtitles = source.subtitle_tracks
     if remove_unnecessary:
-        selected_audio = [track for track in selected_audio if track.language in keep_audio_languages]
-        selected_subtitles = [track for track in selected_subtitles if track.language in keep_sub_languages]
+        selected_audio = [track for track in selected_audio if track_language(track) in keep_audio_languages]
+        selected_subtitles = [track for track in selected_subtitles if track_language(track) in keep_sub_languages]
 
     subtitle_transforms: list[SubtitleTransform] = []
     if restyle_subs:
         transformed_indices = {
-            track.relative_index
+            getattr(track, "relative_index")
             for track in selected_subtitles
-            if track.language in restyle_target_languages
+            if track_language(track) in restyle_target_languages
         }
         subtitle_transforms = [
             SubtitleTransform(
                 source=source.path,
-                relative_index=track.relative_index,
-                language=track.language,
-                title=track.title,
-                is_default=track.is_default,
-                is_forced=track.is_forced,
+                relative_index=getattr(track, "relative_index"),
+                language=track_language(track),
+                title=getattr(track, "title", None),
+                is_default=getattr(track, "is_default", False),
+                is_forced=getattr(track, "is_forced", False),
             )
             for track in selected_subtitles
-            if track.relative_index in transformed_indices
+            if getattr(track, "relative_index") in transformed_indices
         ]
-        selected_subtitles = [track for track in selected_subtitles if track.relative_index not in transformed_indices]
+        selected_subtitles = [track for track in selected_subtitles if getattr(track, "relative_index") not in transformed_indices]
 
-    keep_source_attachments = not bool(subtitle_transforms) or bool(selected_subtitles)
+    keep_source_attachments = not restyle_subs
+
     selection = SelectionPlan(
         video=[TrackRef(source.path, track, "Keep source video track.") for track in source.video_tracks],
         audio=[TrackRef(source.path, track, "Keep source audio track.") for track in selected_audio],
@@ -157,6 +194,11 @@ def plan_single(
     if restyle_subs:
         notes.append("Selected subtitle tracks will be restyled before muxing.")
 
+    direct_postprocess_source = None
+    if (fix_tags or mkv_title) and not remove_unnecessary and not restyle_subs:
+        direct_postprocess_source = source.path
+        notes.append("No mux changes requested; metadata edits can run without remuxing.")
+
     return MuxPlan(
         mode="single",
         output=output,
@@ -166,18 +208,43 @@ def plan_single(
         source_args={},
         mkv_title=mkv_title,
         fix_tags=fix_tags,
+        post_mux_single=None,
+        direct_postprocess_source=direct_postprocess_source,
         notes=notes,
     )
 
 
-def _build_sync_args(tracks: list[TrackInfo], delay_ms: int) -> list[str]:
+def _build_sync_args(tracks: list[object], delay_ms: int) -> list[str]:
     args = list[str]()
     for track in tracks:
-        args.extend(["--sync", f"{track.index}:{delay_ms}"])
+        args.extend(["--sync", f"{getattr(track, 'index')}:{delay_ms}"])
     return args
 
 
-def plan_batch(donor_root: Path, target_root: Path, output_dir: Path, episode_offset: int = 0, fix_tags: bool = False) -> BatchPlan:
+def _unique_tracks(tracks: list[object]) -> list[object]:
+    unique = list[object]()
+    seen = set[tuple[object | None, object | None]]()
+    for track in tracks:
+        key = (getattr(track, "relative_index", None), getattr(track, "index", None))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(track)
+    return unique
+
+
+def plan_batch(
+    donor_root: Path,
+    target_root: Path,
+    output_dir: Path,
+    episode_offset: int = 0,
+    fix_tags: bool = False,
+    remove_unnecessary: bool = False,
+    audio_languages: list[str] | None = None,
+    sub_languages: list[str] | None = None,
+    restyle_subs: bool = False,
+    restyle_languages: list[str] | None = None,
+) -> BatchPlan:
     donor_paths = scan_media_files(donor_root)
     target_paths = scan_media_files(target_root)
     matches, unmatched_donor, unmatched_target, ambiguous_donor, ambiguous_target = match_episode_paths(
@@ -191,7 +258,19 @@ def plan_batch(donor_root: Path, target_root: Path, output_dir: Path, episode_of
         donor_source = inspect_source(match.donor, episode=match.episode)
         target_source = inspect_source(match.target, episode=match.episode)
         output = output_dir.resolve() / match.target.name
-        plans.append(plan_pair(donor_source, target_source, output, fix_tags=fix_tags))
+        plans.append(
+            plan_pair(
+                donor_source,
+                target_source,
+                output,
+                fix_tags=fix_tags,
+                remove_unnecessary=remove_unnecessary,
+                audio_languages=audio_languages,
+                sub_languages=sub_languages,
+                restyle_subs=restyle_subs,
+                restyle_languages=restyle_languages,
+            )
+        )
 
     return BatchPlan(
         donor_root=donor_root.resolve(),
