@@ -105,7 +105,9 @@ def transform_subtitles(
             warn(f"Restyling is unsupported for {track.codec_name}; keeping subtitle track {track.relative_index} unchanged.", transform_subtitles)
             continue
 
-        subtitle = SubFile.from_mkv(item.source_file, track.relative_index, preserve_delay=True)
+        # mkvextract writes the container timestamps into ASS events; carrying the
+        # reported container delay into SubTrack would apply it a second time.
+        subtitle = SubFile.from_mkv(item.source_file, track.relative_index, preserve_delay=False)
         subtitle.unfuck_cr(
             alt_styles=["overlap", "subtitle-2"],
             dialogue_styles=["main", "default", "narrator", "narration", "subtitle", "bd dx"],
