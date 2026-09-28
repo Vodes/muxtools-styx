@@ -27,6 +27,8 @@ The important source-policy flags are:
 
 `--audio-sync` and `--sub-sync` are independent donor offsets in milliseconds. `--restyle-subs` applies the Styx Gandhi-family cleanup to selected ASS tracks. `--fix-tags` repairs technical metadata and flags; `--normalize-track-names` separately normalizes user-facing audio/subtitle titles. `--tpp` is currently a documented no-op and emits one warning.
 
+Temporary muxtools work directories are removed after a successful mux. Pass `--no-clean-work-dirs` to retain extracted and transformed files for inspection.
+
 In JSON mode normal diagnostics are written to stderr. Successful mux and batch results are stable, small objects suitable for Styx-Downloader:
 
 ```json

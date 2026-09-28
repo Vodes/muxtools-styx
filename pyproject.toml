@@ -32,6 +32,8 @@ classifiers = [
 
 [project.scripts]
 muxtools-styx = "muxtools_styx:main"
+mt-styx = "muxtools_styx:main"
+mts = "muxtools_styx:main"
 
 [dependency-groups]
 dev = [
@@ -55,23 +57,9 @@ sdist.include = [
     "subprojects/anitomy",
 ]
 sdist.exclude = [
-    ".gitattributes",
-    ".github",
-    ".github/**",
-    ".gitignore",
-    ".gitmodules",
-    ".pytest_cache",
-    ".pytest_cache/**",
-    ".ruff_cache",
-    ".ruff_cache/**",
-    "AGENTS.md",
     "**/__pycache__",
-    "**/__pycache__/**",
     "**/*.pyc",
-    "context",
-    "context/**",
     "subprojects/anitomy/.git",
-    "subprojects/anitomy/.git/**",
 ]
 
 [tool.ruff]

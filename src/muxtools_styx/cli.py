@@ -72,6 +72,7 @@ def _setup(
     out_dir: Path,
     out_name: str,
     mkv_title: str,
+    clean_work_dirs: bool,
 ) -> Setup:
     parsed = parse_filename(target)
     inferred_episode = str(parsed.episode) if parsed.episode is not None else "01"
@@ -82,6 +83,7 @@ def _setup(
         out_dir=str(out_dir),
         out_name=out_name,
         mkv_title_naming=mkv_title,
+        clean_work_dirs=clean_work_dirs,
     )
 
 
@@ -99,6 +101,7 @@ def mux(
     out_dir: Path = Path("premux"),
     out_name: str = "$show$ - $ep$ (premux)",
     mkv_title: str = "$show$ - $ep$",
+    clean_work_dirs: bool = True,
     output: Annotated[Path | None, Parameter(name=["--output", "-o"])] = None,
     overwrite: bool = False,
     keep_video: bool = False,
@@ -121,7 +124,15 @@ def mux(
     sub_sync: int = 0,
 ) -> None:
     """Mux one target, optionally retaining selected tracks from a donor."""
-    _setup(target, episode=episode, show_name=show_name, out_dir=out_dir, out_name=out_name, mkv_title=mkv_title)
+    _setup(
+        target,
+        episode=episode,
+        show_name=show_name,
+        out_dir=out_dir,
+        out_name=out_name,
+        mkv_title=mkv_title,
+        clean_work_dirs=clean_work_dirs,
+    )
     options = _options(**{key: value for key, value in locals().items() if key in _options.__annotations__})
     result = process_mux(target, donor=donor, options=options, outfile=output, overwrite=overwrite)
     _emit({"output": str(result.resolve())}, f"Output: {result.resolve()}")
@@ -161,6 +172,7 @@ def batch(
     out_dir: Path = Path("premux"),
     out_name: str = "$show$ - $ep$ (premux)",
     mkv_title: str = "$show$ - $ep$",
+    clean_work_dirs: bool = True,
     output: Annotated[Path | None, Parameter(name=["--output", "-o"])] = None,
     overwrite: bool = False,
     keep_video: bool = False,
@@ -202,6 +214,7 @@ def batch(
             out_dir=outfile.parent,
             out_name=outfile.name,
             mkv_title=mkv_title,
+            clean_work_dirs=clean_work_dirs,
         )
 
     result = process_batch(
