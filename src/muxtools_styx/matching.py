@@ -20,10 +20,21 @@ SOURCE_NAMES = {
     "CR": "Crunchyroll",
     "CRUNCHYROLL": "Crunchyroll",
     "AMZN": "Amazon",
+    "AMZ": "Amazon",
     "AMAZON": "Amazon",
+    "AMZ-ANV": "Aniverse",
+    "DSNP": "Disney+",
+    "D+": "Disney+",
+    "HIDI": "Hidive",
+    "BILI": "Bilibili",
+    "BILIBILI": "Bilibili",
+    "BILIBILI COM": "Bilibili",
+    "BSITE": "Bilibili",
+    "ADN": "ADN",
     "NF": "Netflix",
     "NETFLIX": "Netflix",
 }
+_UNCLASSIFIED_SOURCE_NAMES = {alias: SOURCE_NAMES[alias] for alias in ("AMZ-ANV", "AMZ", "D+", "BSITE")}
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,10 +172,16 @@ def parse_episode_key(path: str | Path) -> EpisodeKey | None:
     return parse_filename(path).key
 
 
-def source_label(path: str | Path) -> str | None:
-    for value in element_values(parse_filename(path).elements, ElementKind.SOURCE):
-        source = value.strip().strip("[](){}").strip()
-        if label := SOURCE_NAMES.get(source.upper()):
+def source_label(path: str | Path, supplemental_info: str | None = None) -> str | None:
+    for source_text in (path, supplemental_info):
+        if source_text is None:
+            continue
+        for value in element_values(parse_filename(source_text).elements, ElementKind.SOURCE):
+            source = value.strip().strip("[](){}").strip()
+            if label := SOURCE_NAMES.get(source.upper()):
+                return label
+        tokens = re.split(r"[\s._,\[\](){}]+", Path(source_text).name.upper())
+        if label := next((_UNCLASSIFIED_SOURCE_NAMES[token] for token in tokens if token in _UNCLASSIFIED_SOURCE_NAMES), None):
             return label
     return None
 

@@ -8,8 +8,8 @@ from warnings import warn as python_warn
 
 from muxtools import ParsedFile, Premux, TrackType, apply_dynamic_tokens, get_setup_attr, get_setup_dir, mux
 
-from .metadata import fixed_metadata, metadata_arguments
-from .selection import MuxOptions, SelectedTrack, Selection, select_tracks
+from .metadata import edit_metadata_in_place, fixed_metadata, metadata_arguments
+from .selection import MuxOptions, SelectedTrack, Selection, SyncOptions, TrackOptions, TransformOptions, select_tracks
 from .subtitles import transform_subtitles
 from .sync import sync_arguments
 
@@ -115,20 +115,41 @@ def resolve_output_template(template: str, parsed: ParsedFile, out_dir: Path) ->
 
 
 def resolve_setup_output(target: ParsedFile, selection: Selection) -> Path:
-    template = str(get_setup_attr("out_name", "$show$ - $ep$ (premux)"))
+    template = _resolve_setup_tokens(str(get_setup_attr("out_name", "$show$ - $ep$ (premux)")))
+    return resolve_output_template(template, composed_media(target, selection), Path(str(get_setup_attr("out_dir", "premux"))))
+
+
+def _resolve_setup_tokens(template: str) -> str:
     for attribute in get_setup_dir():
         value = get_setup_attr(attribute, None)
         if isinstance(value, str):
             template = template.replace(f"${attribute}$", value)
     template = template.replace("$show$", str(get_setup_attr("show_name", "Example")))
     template = template.replace("$ep$", str(get_setup_attr("episode", "01")))
-    return resolve_output_template(template, composed_media(target, selection), Path(str(get_setup_attr("out_dir", "premux"))))
+    return template
+
+
+def _can_edit_in_place(options: MuxOptions, donor: Path | None, outfile: Path | None, target: Path) -> bool:
+    transforms = options.transforms
+    metadata_only = transforms.fix_tags or transforms.normalize_track_names
+    expected_transforms = TransformOptions(fix_tags=transforms.fix_tags, normalize_track_names=transforms.normalize_track_names)
+    output_is_target = outfile is None or outfile.expanduser().resolve() == target
+    return (
+        metadata_only
+        and donor is None
+        and options.tracks == TrackOptions()
+        and transforms == expected_transforms
+        and options.sync == SyncOptions()
+        and output_is_target
+    )
 
 
 def process_mux(
     target: Path,
     *,
     donor: Path | None = None,
+    supplemental_info: str | None = None,
+    donor_supplemental_info: str | None = None,
     options: MuxOptions | None = None,
     outfile: Path | None = None,
     overwrite: bool = False,
@@ -141,7 +162,25 @@ def process_mux(
 
     target_info = ParsedFile.from_file(target, process_mux)
     donor_info = ParsedFile.from_file(donor, process_mux) if donor is not None else None
-    selection = select_tracks(target_info, donor_info, options)
+    selection = select_tracks(
+        target_info,
+        donor_info,
+        options,
+        target_supplemental_info=supplemental_info,
+        donor_supplemental_info=donor_supplemental_info,
+    )
+    if _can_edit_in_place(options, donor, outfile, target):
+        if target.suffix.casefold() != ".mkv":
+            raise ValueError("in-place metadata editing requires an MKV input")
+        return edit_metadata_in_place(
+            target,
+            (*selection.video, *selection.audio, *selection.subtitles),
+            normalize_names=options.transforms.normalize_track_names,
+            fix_tags=options.transforms.fix_tags,
+            title=_resolve_setup_tokens(str(get_setup_attr("mkv_title_naming", ""))) if options.transforms.fix_tags else None,
+        )
+    if outfile is not None and outfile.expanduser().resolve() == target:
+        raise ValueError("output may equal the input only when using fix_tags and/or normalize_track_names without other policies")
     outfile = outfile.expanduser().resolve() if outfile is not None else resolve_setup_output(target_info, selection)
     if outfile.exists() and not overwrite:
         raise FileExistsError(f"output already exists: {outfile}")

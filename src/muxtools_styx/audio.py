@@ -35,7 +35,7 @@ def audio_tier(selected: SelectedTrack) -> tuple[int, int]:
             return (3, bitrate)
         return (1, bitrate)
     if audio_format in (AudioFormat.EAC3, AudioFormat.EAC3_ATMOS):
-        if source_label(selected.source_file) == "Amazon":
+        if source_label(selected.source_file, selected.supplemental_info) == "Amazon":
             return (2, bitrate)
         return (0, 0)
     return (0, 0)

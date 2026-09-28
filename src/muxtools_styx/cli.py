@@ -96,6 +96,8 @@ def mux(
     target: Path,
     *,
     donor: Path | None = None,
+    supplemental_info: str | None = None,
+    donor_supplemental_info: str | None = None,
     episode: str | None = None,
     show_name: str | None = None,
     out_dir: Path = Path("premux"),
@@ -134,7 +136,15 @@ def mux(
         clean_work_dirs=clean_work_dirs,
     )
     options = _options(**{key: value for key, value in locals().items() if key in _options.__annotations__})
-    result = process_mux(target, donor=donor, options=options, outfile=output, overwrite=overwrite)
+    result = process_mux(
+        target,
+        donor=donor,
+        supplemental_info=supplemental_info,
+        donor_supplemental_info=donor_supplemental_info,
+        options=options,
+        outfile=output,
+        overwrite=overwrite,
+    )
     _emit({"output": str(result.resolve())}, f"Output: {result.resolve()}")
 
 
@@ -164,6 +174,8 @@ def batch(
     target_dir: Path,
     *,
     donor_dir: Path | None = None,
+    supplemental_info: str | None = None,
+    donor_supplemental_info: str | None = None,
     episode_offset: int = 0,
     skip_unmatched: bool = False,
     dry_run: bool = False,
@@ -220,6 +232,8 @@ def batch(
     result = process_batch(
         target_dir,
         donor_dir=donor_dir,
+        supplemental_info=supplemental_info,
+        donor_supplemental_info=donor_supplemental_info,
         episode_offset=episode_offset,
         skip_unmatched=skip_unmatched,
         dry_run=dry_run,

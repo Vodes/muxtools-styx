@@ -54,6 +54,7 @@ class MuxOptions:
 class SelectedTrack:
     track: TrackInfo
     source_file: Path
+    supplemental_info: str | None = None
 
 
 @dataclass(frozen=True)
@@ -78,8 +79,8 @@ def is_signs_or_forced(track: TrackInfo) -> bool:
     return track.is_forced or any(word in title for word in ("sign", "song", "forced"))
 
 
-def _select(parsed: ParsedFile, kind: TrackType) -> list[SelectedTrack]:
-    return [SelectedTrack(track, parsed.source) for track in parsed.find_tracks(type=kind)]
+def _select(parsed: ParsedFile, kind: TrackType, supplemental_info: str | None) -> list[SelectedTrack]:
+    return [SelectedTrack(track, parsed.source, supplemental_info) for track in parsed.find_tracks(type=kind)]
 
 
 def _dedupe(tracks: Iterable[SelectedTrack]) -> list[SelectedTrack]:
@@ -117,13 +118,20 @@ def validate_options(options: MuxOptions, donor: Path | None) -> None:
         raise ValueError("the selected policy requires a donor file")
 
 
-def select_tracks(target: ParsedFile, donor: ParsedFile | None, options: MuxOptions) -> Selection:
+def select_tracks(
+    target: ParsedFile,
+    donor: ParsedFile | None,
+    options: MuxOptions,
+    *,
+    target_supplemental_info: str | None = None,
+    donor_supplemental_info: str | None = None,
+) -> Selection:
     validate_options(options, donor.source if donor else None)
     policy = options.tracks
 
-    target_video = _select(target, TrackType.VIDEO)
-    target_audio = _select(target, TrackType.AUDIO)
-    target_subs = [] if policy.discard_new_subs else _select(target, TrackType.SUB)
+    target_video = _select(target, TrackType.VIDEO, target_supplemental_info)
+    target_audio = _select(target, TrackType.AUDIO, target_supplemental_info)
+    target_subs = [] if policy.discard_new_subs else _select(target, TrackType.SUB, target_supplemental_info)
     if len(target_video) != 1:
         raise ValueError(f"target must contain exactly one video track: {target.source}")
     if not target_audio:
@@ -134,9 +142,9 @@ def select_tracks(target: ParsedFile, donor: ParsedFile | None, options: MuxOpti
     subtitles = target_subs
 
     if donor is not None:
-        donor_video = _select(donor, TrackType.VIDEO)
-        donor_audio = _select(donor, TrackType.AUDIO)
-        donor_subs = _select(donor, TrackType.SUB)
+        donor_video = _select(donor, TrackType.VIDEO, donor_supplemental_info)
+        donor_audio = _select(donor, TrackType.AUDIO, donor_supplemental_info)
+        donor_subs = _select(donor, TrackType.SUB, donor_supplemental_info)
 
         if policy.keep_video:
             if len(donor_video) != 1:

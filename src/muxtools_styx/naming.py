@@ -55,7 +55,7 @@ def normalize_audio_title(selected: SelectedTrack) -> str:
     channels = _track_channels(selected.track)
     if channels:
         title = f"{title} {channels}"
-    source = source_label(selected.source_file)
+    source = source_label(selected.source_file, selected.supplemental_info)
     return f"{title} ({source})" if source else title
 
 
@@ -76,8 +76,8 @@ def normalize_subtitle_title(selected: SelectedTrack) -> str:
     title = f"{display_language(track)} Signs/Songs" if is_signs else display_language(track)
 
     if local_provenance:
-        return f"{title} {local_provenance}"
-    source = source_label(selected.source_file)
+        title = f"{title} {local_provenance}"
+    source = source_label(selected.source_file, selected.supplemental_info)
     return f"{title} ({source})" if source else title
 
 

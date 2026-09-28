@@ -27,6 +27,10 @@ The important source-policy flags are:
 
 `--audio-sync` and `--sub-sync` are independent donor offsets in milliseconds. `--restyle-subs` applies the Styx Gandhi-family cleanup to selected ASS tracks. `--fix-tags` repairs technical metadata and flags; `--normalize-track-names` separately normalizes user-facing audio/subtitle titles. `--tpp` is currently a documented no-op and emits one warning.
 
+A donor-free `mux` using only `--fix-tags`, `--normalize-track-names`, or both edits an MKV in place with `mkvpropedit` when `-o` is omitted or points to the input file. Any other policy, or a distinct output path, uses the normal remux path.
+
+`--supplemental-info TEXT` supplies extra target filename metadata for source provenance when the filename itself has no recognized service. `--donor-supplemental-info TEXT` does the same for a donor. A recognized source in the actual filename takes precedence.
+
 Temporary muxtools work directories are removed after a successful mux. Pass `--no-clean-work-dirs` to retain extracted and transformed files for inspection.
 
 In JSON mode normal diagnostics are written to stderr. Successful mux and batch results are stable, small objects suitable for Styx-Downloader:

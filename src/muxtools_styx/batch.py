@@ -180,6 +180,8 @@ def process_batch(
     target_dir: str | Path,
     *,
     donor_dir: str | Path | None = None,
+    supplemental_info: str | None = None,
+    donor_supplemental_info: str | None = None,
     episode_offset: int = 0,
     skip_unmatched: bool = False,
     dry_run: bool = False,
@@ -203,7 +205,13 @@ def process_batch(
     def resolve_output(match: BatchMatch) -> Path:
         target_info = ParsedFile.from_file(match.target, process_batch)
         donor_info = ParsedFile.from_file(match.donor, process_batch) if match.donor else None
-        selection = select_tracks(target_info, donor_info, mux_options)
+        selection = select_tracks(
+            target_info,
+            donor_info,
+            mux_options,
+            target_supplemental_info=supplemental_info,
+            donor_supplemental_info=donor_supplemental_info,
+        )
         if output_resolver is None:
             return _default_output_path(match.target, Path(output_dir) if output_dir is not None else None)
         return output_resolver(match, target_info, selection)
@@ -241,7 +249,15 @@ def process_batch(
                 out_dir=str(output.parent),
                 out_name=output.name,
             )
-        result = process_mux(match.target, donor=match.donor, options=mux_options, outfile=output, overwrite=overwrite)
+        result = process_mux(
+            match.target,
+            donor=match.donor,
+            supplemental_info=supplemental_info,
+            donor_supplemental_info=donor_supplemental_info,
+            options=mux_options,
+            outfile=output,
+            overwrite=overwrite,
+        )
         outputs.append(Path(result))
     return BatchResult(tuple(outputs), preflight.skipped, preflight)
 

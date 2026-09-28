@@ -56,13 +56,54 @@ def test_first_recognized_service_source_is_used() -> None:
     assert source_label("Show.S01E01.WEB-DL.AMZN.mkv") == "Amazon"
 
 
+def test_additional_source_aliases() -> None:
+    assert source_label("Show.S01E01.DSNP.mkv") == "Disney+"
+    assert source_label("Show.S01E01.D+.mkv") == "Disney+"
+    assert source_label("Show.S01E01.AMZ.mkv") == "Amazon"
+    assert source_label("Show.S01E01.AMZ-ANV.mkv") == "Aniverse"
+    assert source_label("Show.S01E01.HIDI.mkv") == "Hidive"
+    assert source_label("Show.S01E01.BILI.mkv") == "Bilibili"
+    assert source_label("Show.S01E01.BILIBILI.mkv") == "Bilibili"
+    assert source_label("Show S01E01 [BILIBILI COM].mkv") == "Bilibili"
+    assert source_label("Show.S01E01.BSite.mkv") == "Bilibili"
+    assert source_label("Show.S01E01.ADN.mkv") == "ADN"
+
+
+def test_supplemental_info_supplies_missing_source_without_overriding_filename() -> None:
+    supplemental = "Temppal Item no Chikara (Overgeared) [GerJapDub,GerEngSub,CR]"
+    assert source_label("Temppal Item no Chikara E01 [1080p][AAC][GerJapDub][GerEngSub][Web-DL].mkv", supplemental) == "Crunchyroll"
+    assert source_label("Show.S01E01.NF.mkv", supplemental) == "Netflix"
+
+
+def test_supplemental_source_is_used_in_normalized_track_title() -> None:
+    selected = SelectedTrack(
+        cast(TrackInfo, Track("jpn")),
+        Path("Temppal Item no Chikara E01 [1080p][AAC][Web-DL].mkv"),
+        "Temppal Item no Chikara (Overgeared) [GerJapDub,GerEngSub,CR]",
+    )
+    assert normalize_audio_title(selected) == "Japanese 2.0 (Crunchyroll)"
+
+
 def test_language_display_uses_langcodes_data() -> None:
     assert display_language(cast(TrackInfo, Track("enm"))) == "Middle English"
 
 
 def test_subtitle_local_provenance_survives_honorific_cleanup() -> None:
     selected = SelectedTrack(cast(TrackInfo, Track("eng", "Full Subtitles [sam] (Honorifics)", type="SUB")), Path("Show - 01 [CR].mkv"))
-    assert normalize_subtitle_title(selected) == "English [sam]"
+    assert normalize_subtitle_title(selected) == "English [sam] (Crunchyroll)"
+
+
+def test_subtitle_ccc_conversion_and_source_are_preserved() -> None:
+    selected = SelectedTrack(cast(TrackInfo, Track("eng", "Full Subtitles (CCC Converted)", type="SUB")), Path("Show - 01 [CR].mkv"))
+    assert normalize_subtitle_title(selected) == "English (CCC Converted) (Crunchyroll)"
+
+
+def test_subtitle_suffix_order_is_preserved_before_source() -> None:
+    selected = SelectedTrack(
+        cast(TrackInfo, Track("eng", "Full Subtitles [sam] (CCC Converted)", type="SUB")),
+        Path("Show - 01 [CR].mkv"),
+    )
+    assert normalize_subtitle_title(selected) == "English [sam] (CCC Converted) (Crunchyroll)"
 
 
 def test_preflight_reports_duplicate_outputs(tmp_path: Path) -> None:
