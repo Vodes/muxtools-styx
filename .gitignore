@@ -4,6 +4,9 @@ premux/
 _workdir/
 config.ini
 /test.py
+.venv/
+context/
+Agents.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
