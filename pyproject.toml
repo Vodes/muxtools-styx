@@ -94,3 +94,6 @@ skip = ["*-musllinux_*"]
 audit-requires = ["abi3audit"]
 audit-command = "abi3audit --strict --report {abi3_wheel}"
 test-command = "python -c \"from muxtools_styx import _anitomy; assert _anitomy.parse('[Group] Show - 01 [1080p CR].mkv')\""
+
+[tool.cibuildwheel.macos]
+environment = { MACOSX_DEPLOYMENT_TARGET = "12.0" }
