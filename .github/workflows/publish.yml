@@ -11,12 +11,18 @@ permissions:
 
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    env:
+      CXX: g++-14
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
+      - name: Install C++23 compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes g++-14
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
