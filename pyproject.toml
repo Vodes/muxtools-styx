@@ -16,7 +16,7 @@ license = "MPL-2.0"
 requires-python = ">=3.12"
 dependencies = [
     "cyclopts>=5.0.0",
-    "muxtools>=0.4.3",
+    "muxtools>=0.5.0b1",
 ]
 classifiers = [
     "Natural Language :: English",
