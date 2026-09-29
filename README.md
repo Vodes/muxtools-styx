@@ -83,4 +83,9 @@ uv run pytest
 uv build
 ```
 
+Versions come from Git tags using the same `versioningit` scheme as muxtools: a clean `v0.3.0` tag builds as `0.3.0`,
+subsequent commits as `0.4.0.devN+gHASH`, and dirty builds add `.dirty` (or use `0.4.0+dirty` at the tag).
+Clone with full history for version detection. Builds without Git metadata or sdist metadata fall back to `0.0.0+unknown`.
+The generated `muxtools_styx._version` module exposes `__version__` and `__version_tuple__`, also available from `muxtools_styx`.
+
 Anitomy is a pinned Git submodule under `subprojects/anitomy` and is bound directly through nanobind. The binding preserves ordered elements, duplicates, UTF-8 values, and byte positions; Styx-specific interpretation remains in Python.
