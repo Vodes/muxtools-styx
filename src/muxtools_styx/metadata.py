@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from muxtools import MKVPropEdit, TrackType
+from muxtools import MKVPropEdit, TrackType, get_setup_attr
 
 from .selection import SelectedTrack, canonical_language, is_signs_or_forced
 
@@ -62,13 +62,21 @@ def edit_metadata_in_place(
     normalize_names: bool,
     fix_tags: bool,
     title: str | None = None,
+    muxing_application: str | None = None,
 ) -> Path:
     from .naming import normalized_track_title
 
     fixed = fixed_metadata(tracks) if fix_tags else {}
     editor = MKVPropEdit(target)
-    if title is not None:
-        editor.info(title=title)
+    if get_setup_attr("skip_mux_branding", False):
+        muxing_application = None
+    elif muxing_application:
+        from muxtools import __version__
+
+        if " + muxtools v" not in muxing_application:
+            muxing_application += f" + muxtools v{__version__}"
+    if title is not None or muxing_application:
+        editor.info(title=title, muxing_application=muxing_application)
     type_order = {TrackType.VIDEO: 0, TrackType.AUDIO: 1, TrackType.SUB: 2}
     ordered_tracks = sorted(tracks, key=lambda item: (type_order.get(item.track.type, 3), item.track.relative_index))
     for selected in ordered_tracks:

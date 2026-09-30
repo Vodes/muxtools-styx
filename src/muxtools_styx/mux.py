@@ -172,12 +172,15 @@ def process_mux(
     if _can_edit_in_place(options, donor, outfile, target):
         if target.suffix.casefold() != ".mkv":
             raise ValueError("in-place metadata editing requires an MKV input")
+        container = target_info.container_info.raw_mkvmerge
+        muxing_application = container.properties.muxing_application if container and container.properties else None
         return edit_metadata_in_place(
             target,
             (*selection.video, *selection.audio, *selection.subtitles),
             normalize_names=options.transforms.normalize_track_names,
             fix_tags=options.transforms.fix_tags,
             title=_resolve_setup_tokens(str(get_setup_attr("mkv_title_naming", ""))) if options.transforms.fix_tags else None,
+            muxing_application=muxing_application,
         )
     if outfile is not None and outfile.expanduser().resolve() == target:
         raise ValueError("output may equal the input only when using fix_tags and/or normalize_track_names without other policies")

@@ -163,10 +163,43 @@ def test_in_place_metadata_uses_relative_type_order_and_removes_track_tags(tmp_p
 
     assert result == target
     assert [kind for kind, _kwargs in calls] == ["info", "video", "audio", "audio", "sub", "sub"]
-    assert calls[0][1] == {"title": "Show - 01"}
+    assert calls[0][1] == {"title": "Show - 01", "muxing_application": None}
     assert all(kwargs["tags"] == {} for _kind, kwargs in calls[1:])
     assert calls[2][1] == {"name": None, "language": "ja", "default": True, "forced": False, "tags": {}}
     assert calls[4][1]["forced"] is True
+
+
+@pytest.mark.parametrize("skip_branding", [False, True])
+@pytest.mark.parametrize("existing_branding", [False, True])
+@pytest.mark.parametrize("title", [None, "Show - 01"])
+def test_in_place_metadata_preserves_muxing_library_and_brands_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, skip_branding: bool, existing_branding: bool, title: str | None
+) -> None:
+    from muxtools import __version__
+
+    target = tmp_path / "target.mkv"
+    library = "libebml v1.4.5 + libmatroska v1.7.1"
+    branded = f"{library} + muxtools v{__version__}"
+    original = branded if existing_branding else library
+    calls: list[dict[str, object]] = []
+
+    class Editor:
+        def __init__(self, path: Path) -> None:
+            assert path == target
+
+        def info(self, **kwargs: object) -> None:
+            calls.append(kwargs)
+
+        def run(self) -> tuple[Path, bool]:
+            return target, True
+
+    monkeypatch.setattr(metadata_module, "MKVPropEdit", Editor)
+    monkeypatch.setattr(metadata_module, "get_setup_attr", lambda *_args: skip_branding)
+    assert edit_metadata_in_place(target, (), normalize_names=True, fix_tags=False, title=title, muxing_application=original) == target
+    if skip_branding and title is None:
+        assert calls == []
+    else:
+        assert calls == [{"title": title, "muxing_application": None if skip_branding else branded}]
 
 
 def test_documented_best_audio_tiers() -> None:
@@ -236,12 +269,22 @@ def test_metadata_only_mux_edits_input_in_place(tmp_path: Path, monkeypatch: pyt
         target,
     )
     edited: list[Path] = []
-    monkeypatch.setattr(mux_module.ParsedFile, "from_file", lambda *_args: cast(ParsedFile, object()))
+    edited_info: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        mux_module.ParsedFile,
+        "from_file",
+        lambda *_args: cast(
+            ParsedFile,
+            SimpleNamespace(
+                container_info=SimpleNamespace(raw_mkvmerge=SimpleNamespace(properties=SimpleNamespace(muxing_application="original library")))
+            ),
+        ),
+    )
     monkeypatch.setattr(mux_module, "select_tracks", lambda *_args, **_kwargs: selection)
     monkeypatch.setattr(
         mux_module,
         "edit_metadata_in_place",
-        lambda path, *_args, **_kwargs: edited.append(path) or path,
+        lambda path, *_args, **kwargs: edited_info.append(kwargs) or edited.append(path) or path,
     )
     monkeypatch.setattr(mux_module, "resolve_setup_output", lambda *_args: pytest.fail("resolved a remux output"))
     monkeypatch.setattr(mux_module, "mux", lambda *_args, **_kwargs: pytest.fail("started a remux"))
@@ -254,6 +297,7 @@ def test_metadata_only_mux_edits_input_in_place(tmp_path: Path, monkeypatch: pyt
 
     assert result == target.resolve()
     assert edited == [target.resolve()]
+    assert edited_info[0]["muxing_application"] == "original library"
 
 
 def test_content_changing_mux_cannot_use_input_as_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
