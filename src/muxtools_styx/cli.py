@@ -78,7 +78,6 @@ def _setup(
     inferred_episode = str(parsed.episode) if parsed.episode is not None else "01"
     return Setup(
         episode=episode or inferred_episode,
-        config_file="",
         show_name=show_name or parsed.title or target.stem,
         out_dir=str(out_dir),
         out_name=out_name,
