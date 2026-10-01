@@ -30,6 +30,7 @@ foreach(header IN ITEMS
     anitomy/detail/util.hpp
     anitomy/detail/parser/episode.hpp
     anitomy/detail/parser/file_extension.hpp
+    anitomy/detail/parser/keywords.hpp
     anitomy/detail/parser/season.hpp
     anitomy/detail/parser/year.hpp
 )
