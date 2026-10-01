@@ -28,6 +28,7 @@ def test_all_upstream_element_kinds_are_exposed() -> None:
         "VIDEO_TERM",
         "VOLUME",
         "YEAR",
+        "EPISODE_ALTERNATIVE",
     }
     assert not hasattr(_anitomy, "TITLE")
 
@@ -62,6 +63,10 @@ def test_element_is_immutable() -> None:
         ("Show", [("TITLE", "Show", 0)]),
         ("Show.mkv", [("TITLE", "Show", 0), ("FILE_EXTENSION", "mkv", 5)]),
         ("Show - 07.5.mkv", [("TITLE", "Show", 0), ("EPISODE", "07.5", 7), ("FILE_EXTENSION", "mkv", 12)]),
+        (
+            "Show - 01 (176).mkv",
+            [("TITLE", "Show", 0), ("EPISODE", "01", 7), ("EPISODE_ALTERNATIVE", "176", 11), ("FILE_EXTENSION", "mkv", 16)],
+        ),
         ("Show 4a.mkv", [("TITLE", "Show", 0), ("EPISODE", "4a", 5), ("FILE_EXTENSION", "mkv", 8)]),
         (
             "NieR:Automata Ver1.1a - 03.mkv",

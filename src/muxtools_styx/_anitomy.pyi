@@ -22,6 +22,7 @@ class ElementKind(Enum):
     VIDEO_TERM: ElementKind
     VOLUME: ElementKind
     YEAR: ElementKind
+    EPISODE_ALTERNATIVE: ElementKind
 
 class Element:
     def __init__(self, kind: ElementKind, value: str, position: int) -> None: ...

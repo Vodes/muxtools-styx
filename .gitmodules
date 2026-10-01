@@ -1,3 +1,4 @@
 [submodule "subprojects/anitomy"]
 	path = subprojects/anitomy
-	url = https://github.com/erengy/anitomy.git
+	url = https://github.com/Vodes/anitomy.git
+	branch = feat/misc-fixes

@@ -40,7 +40,8 @@ void bind_element_kind(nb::module_& module) {
       .value("VIDEO_RESOLUTION", anitomy::ElementKind::VideoResolution)
       .value("VIDEO_TERM", anitomy::ElementKind::VideoTerm)
       .value("VOLUME", anitomy::ElementKind::Volume)
-      .value("YEAR", anitomy::ElementKind::Year);
+      .value("YEAR", anitomy::ElementKind::Year)
+      .value("EPISODE_ALTERNATIVE", anitomy::ElementKind::EpisodeAlternative);
 }
 
 void bind_element(nb::module_& module) {
