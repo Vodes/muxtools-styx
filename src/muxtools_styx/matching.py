@@ -172,6 +172,14 @@ def parse_episode_key(path: str | Path) -> EpisodeKey | None:
     return parse_filename(path).key
 
 
+def format_episode(episode: str | int, padding: int = 2) -> str:
+    """Pad numeric episode identifiers without changing labels or truncating digits."""
+    if padding < 2:
+        raise ValueError("episode_padding must be at least 2")
+    value = str(episode)
+    return value.zfill(padding) if value.isdecimal() else value
+
+
 def source_label(path: str | Path, supplemental_info: str | None = None) -> str | None:
     for source_text in (path, supplemental_info):
         if source_text is None:
@@ -196,7 +204,9 @@ def scan_media_files(root: str | Path) -> list[Path]:
     )
 
 
-def _index_episode_paths(paths: Iterable[Path], offset: int = 0) -> tuple[dict[EpisodeKey, list[Path]], list[Path]]:
+def _index_episode_paths(
+    paths: Iterable[Path], offset: int = 0, *, season_override: int | None = None
+) -> tuple[dict[EpisodeKey, list[Path]], list[Path]]:
     indexed: dict[EpisodeKey, list[Path]] = {}
     unknown: list[Path] = []
     for path in sorted((Path(item) for item in paths), key=lambda item: item.name.casefold()):
@@ -205,20 +215,24 @@ def _index_episode_paths(paths: Iterable[Path], offset: int = 0) -> tuple[dict[E
             unknown.append(path)
             continue
         shifted = key.apply_offset(offset) if offset else key
+        if season_override is not None:
+            shifted = EpisodeKey(shifted.number, season_override, shifted.raw)
         indexed.setdefault(shifted, []).append(path)
     return indexed, unknown
 
 
 def match_episode_paths(
-    donor_paths: Iterable[str | Path], target_paths: Iterable[str | Path], offset: int = 0
+    donor_paths: Iterable[str | Path], target_paths: Iterable[str | Path], offset: int = 0, *, donor_season: int | None = None
 ) -> tuple[list[PairMatch], list[Path], list[Path], dict[str, list[Path]], dict[str, list[Path]]]:
     """Match donor files to targets by season/episode.
 
-    The offset is applied only to donor keys.  The five-tuple return is kept
-    intentionally simple for callers that need to render detailed diagnostics.
+    The offset and season override are applied only to donor keys. The five-tuple
+    return is kept simple for callers that need to render detailed diagnostics.
     """
 
-    donor_index, donor_unknown = _index_episode_paths((Path(path) for path in donor_paths), offset)
+    if donor_season is not None and donor_season < 0:
+        raise ValueError("donor_season must be non-negative")
+    donor_index, donor_unknown = _index_episode_paths((Path(path) for path in donor_paths), offset, season_override=donor_season)
     target_index, target_unknown = _index_episode_paths(Path(path) for path in target_paths)
     matches: list[PairMatch] = []
     unmatched_donor = list(donor_unknown)
@@ -259,6 +273,7 @@ __all__ = [
     "element_value",
     "element_values",
     "first_element",
+    "format_episode",
     "match_episode_paths",
     "parse_episode_key",
     "parse_filename",

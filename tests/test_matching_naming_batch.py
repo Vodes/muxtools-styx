@@ -5,11 +5,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
+import pytest
 from langcodes import Language
 from muxtools import TrackInfo
 
 from muxtools_styx.batch import preflight_batch
-from muxtools_styx.matching import match_episode_paths, parse_episode_key, source_label
+from muxtools_styx.matching import EpisodeKey, match_episode_paths, parse_episode_key, source_label
 from muxtools_styx.naming import SelectedTrack, display_language, normalize_audio_title, normalize_subtitle_title
 
 
@@ -28,6 +29,60 @@ def test_episode_keys_ignore_filename_for_target_donor_matching() -> None:
 
 def test_parse_episode_key_rejects_ranges() -> None:
     assert parse_episode_key(Path("Show - 01-02.mkv")) is None
+
+
+@pytest.mark.parametrize("donor_name", ["Show 2 E01.mkv", "Show.S01E01.mkv"])
+@pytest.mark.parametrize("season", [0, 2])
+def test_donor_season_override_with_episode_offset(donor_name: str, season: int) -> None:
+    donor = Path(donor_name)
+    target = Path(f"Show.S{season:02d}E02.mkv")
+    matches, unused, unmatched, ambiguous_donor, ambiguous_target = match_episode_paths([donor], [target], offset=1, donor_season=season)
+    assert len(matches) == 1
+    assert matches[0].episode == EpisodeKey(2, season)
+    assert matches[0].donor == donor
+    assert matches[0].target == target
+    assert not unused and not unmatched and not ambiguous_donor and not ambiguous_target
+
+
+def test_missing_season_does_not_match_automatically() -> None:
+    donor = Path("Show 2 E01.mkv")
+    target = Path("Show.S02E01.mkv")
+    matches, unused, unmatched, _, _ = match_episode_paths([donor], [target])
+    assert not matches
+    assert unused == [donor]
+    assert unmatched == [target]
+
+
+def test_donor_season_override_preserves_duplicate_and_range_checks() -> None:
+    donors = [Path("Show.S01E01.mkv"), Path("Show.S02E01.mkv"), Path("Show - 02-03.mkv")]
+    matches, unused, _, ambiguous_donor, _ = match_episode_paths(donors, ["Show.S02E01.mkv"], donor_season=2)
+    assert not matches
+    assert unused == [donors[2]]
+    assert ambiguous_donor == {"S02E01": donors[:2]}
+
+
+def test_batch_donor_season_override_matches_edgerunners(tmp_path: Path) -> None:
+    target_dir = tmp_path / "targets"
+    donor_dir = tmp_path / "donors"
+    target_dir.mkdir()
+    donor_dir.mkdir()
+    for episode in range(1, 11):
+        (target_dir / f"Cyberpunk.Edgerunners.S02E{episode:02d}.2160p.NF.WEB-DL.DDP5.1.HEVC-NTb.mkv").touch()
+        (donor_dir / f"Cyberpunk Edgerunners 2 E{episode:02d} [1080p][E-AC-3][GerJapDub][GerEngSub][Web-DL].mkv").touch()
+    result = preflight_batch(target_dir, donor_dir=donor_dir, donor_season=2, output_dir=tmp_path / "muxed")
+    assert result.ok
+    assert [match.episode for match in result.matches] == [EpisodeKey(episode, 2) for episode in range(1, 11)]
+    assert not result.unused_donors and not result.unmatched_targets
+
+
+def test_donor_season_override_requires_donors(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="donor_season requires a donor directory"):
+        preflight_batch(tmp_path, donor_season=2)
+
+
+def test_donor_season_override_rejects_negative_season() -> None:
+    with pytest.raises(ValueError, match="donor_season must be non-negative"):
+        match_episode_paths([], [], donor_season=-1)
 
 
 @dataclass

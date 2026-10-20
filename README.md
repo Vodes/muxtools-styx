@@ -10,6 +10,7 @@ Python 3.12 or newer and MKVToolNix/FFmpeg are required. Binary wheels are publi
 muxtools-styx mux target.mkv -o finished.mkv
 muxtools-styx mux target.mkv --donor previous.mkv --fill-audio --keep-subs-missing-languages
 muxtools-styx batch downloads/ --donor-dir previous/ --out-dir muxed --dry-run
+muxtools-styx batch downloads/ --donor-dir previous/ --donor-season 2 --out-dir muxed --dry-run
 muxtools-styx --json inspect '[Group] Show - 03 [1080p CR].mkv'
 ```
 
@@ -30,6 +31,9 @@ The important source-policy flags are:
 A donor-free `mux` using only `--fix-tags`, `--normalize-track-names`, or both edits an MKV in place with `mkvpropedit` when `-o` is omitted or points to the input file. Any other policy, or a distinct output path, uses the normal remux path.
 
 `--supplemental-info TEXT` supplies extra target filename metadata for source provenance when the filename itself has no recognized service. `--donor-supplemental-info TEXT` does the same for a donor. A recognized source in the actual filename takes precedence.
+
+For `mux` and `batch`, numeric episode identifiers use at least two digits in output filenames and MKV titles (`01`, `02`, …).
+Use `--episode-padding 3` for `001`, `002`, …; larger episode numbers are never truncated. This also applies to `--episode` overrides.
 
 Temporary muxtools work directories are removed after a successful mux. Pass `--no-clean-work-dirs` to retain extracted and transformed files for inspection.
 
@@ -68,6 +72,11 @@ output = process_mux(
 ```
 
 Batch matching uses normalized season/episode keys, applies offsets to the donor side, rejects duplicates and unsafe episode ranges, completes preflight before muxing, and runs accepted files sequentially because `muxtools.Setup` is process-wide state.
+
+Use `--donor-season 2` when donor filenames omit or use a different season, such as `Show 2 E01.mkv` paired with `Show.S02E01.mkv`.
+It overrides the season for every donor file during matching, can be combined with `--episode-offset`, and accepts `0` for specials.
+The Python batch functions accept the same override as `donor_season=2`.
+`process_batch` also accepts `episode_padding=3` for the MKV titles produced by its default setup.
 
 ## Development
 

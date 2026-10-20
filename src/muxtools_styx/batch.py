@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .matching import EpisodeKey, _index_episode_paths, match_episode_paths, parse_episode_key, scan_media_files
+from .matching import EpisodeKey, _index_episode_paths, format_episode, match_episode_paths, parse_episode_key, scan_media_files
 
 if TYPE_CHECKING:
     from muxtools import ParsedFile
@@ -113,6 +113,7 @@ def preflight_batch(
     target_dir: str | Path,
     *,
     donor_dir: str | Path | None = None,
+    donor_season: int | None = None,
     episode_offset: int = 0,
     skip_unmatched: bool = False,
     output_dir: str | Path | None = None,
@@ -121,6 +122,8 @@ def preflight_batch(
 ) -> BatchPreflight:
     """Discover files and validate every match before expensive mux work."""
 
+    if donor_season is not None and donor_dir is None:
+        raise ValueError("donor_season requires a donor directory")
     target_root = Path(target_dir)
     targets = scan_media_files(target_root)
     donor_root = Path(donor_dir) if donor_dir is not None else None
@@ -135,7 +138,9 @@ def preflight_batch(
         ambiguous_donors: dict[str, tuple[Path, ...]] = {}
         unused_donors: tuple[Path, ...] = ()
     else:
-        pairs, unused_donor, unmatched_target, ambiguous_donor, ambiguous_target = match_episode_paths(donors, targets, episode_offset)
+        pairs, unused_donor, unmatched_target, ambiguous_donor, ambiguous_target = match_episode_paths(
+            donors, targets, episode_offset, donor_season=donor_season
+        )
         matches = tuple(BatchMatch(pair.episode, pair.target, pair.donor) for pair in pairs)
         unmatched_targets = tuple(unmatched_target)
         unused_donors = tuple(unused_donor)
@@ -180,9 +185,11 @@ def process_batch(
     target_dir: str | Path,
     *,
     donor_dir: str | Path | None = None,
+    donor_season: int | None = None,
     supplemental_info: str | None = None,
     donor_supplemental_info: str | None = None,
     episode_offset: int = 0,
+    episode_padding: int = 2,
     skip_unmatched: bool = False,
     dry_run: bool = False,
     output_dir: str | Path | None = None,
@@ -199,6 +206,8 @@ def process_batch(
 
     from .selection import MuxOptions, select_tracks, validate_options
 
+    if episode_padding < 2:
+        raise ValueError("episode_padding must be at least 2")
     mux_options = options or MuxOptions()
     validate_options(mux_options, Path(donor_dir) if donor_dir is not None else None)
 
@@ -219,6 +228,7 @@ def process_batch(
     preflight = preflight_batch(
         target_dir,
         donor_dir=donor_dir,
+        donor_season=donor_season,
         episode_offset=episode_offset,
         skip_unmatched=skip_unmatched,
         output_dir=output_dir,
@@ -243,7 +253,7 @@ def process_batch(
 
             info = parse_filename(match.target)
             Setup(
-                episode=str(match.episode.number),
+                episode=format_episode(match.episode.number, episode_padding),
                 config_file="",
                 show_name=info.title or match.target.stem,
                 out_dir=str(output.parent),

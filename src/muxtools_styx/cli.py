@@ -10,7 +10,7 @@ from muxtools import ParsedFile, Setup
 
 from .batch import BatchMatch, BatchPreflight, BatchResult, process_batch
 from .inspect import format_inspection, inspect_file
-from .matching import parse_filename
+from .matching import format_episode, parse_filename
 from .mux import composed_media, process_mux, resolve_output_template
 from .selection import MuxOptions, Selection, SyncOptions, TrackOptions, TransformOptions
 
@@ -73,11 +73,12 @@ def _setup(
     out_name: str,
     mkv_title: str,
     clean_work_dirs: bool,
+    episode_padding: int = 2,
 ) -> Setup:
     parsed = parse_filename(target)
     inferred_episode = str(parsed.episode) if parsed.episode is not None else "01"
     return Setup(
-        episode=episode or inferred_episode,
+        episode=format_episode(episode or inferred_episode, episode_padding),
         show_name=show_name or parsed.title or target.stem,
         out_dir=str(out_dir),
         out_name=out_name,
@@ -98,6 +99,7 @@ def mux(
     supplemental_info: str | None = None,
     donor_supplemental_info: str | None = None,
     episode: str | None = None,
+    episode_padding: Annotated[int, Parameter(help="Minimum digits for numeric episode identifiers (at least 2).")] = 2,
     show_name: str | None = None,
     out_dir: Path = Path("premux"),
     out_name: str = "$show$ - $ep$ (premux)",
@@ -128,6 +130,7 @@ def mux(
     _setup(
         target,
         episode=episode,
+        episode_padding=episode_padding,
         show_name=show_name,
         out_dir=out_dir,
         out_name=out_name,
@@ -161,10 +164,12 @@ def _resolve_batch_output(
     out_dir: Path,
     out_name: str,
     show_name: str | None,
+    episode: str | None = None,
+    episode_padding: int = 2,
 ) -> Path:
     info = parse_filename(match.target)
-    episode = f"{match.episode.number:02d}"
-    template = out_name.replace("$show$", show_name or info.title or match.target.stem).replace("$ep$", episode)
+    formatted_episode = format_episode(episode or match.episode.number, episode_padding)
+    template = out_name.replace("$show$", show_name or info.title or match.target.stem).replace("$ep$", formatted_episode)
     return resolve_output_template(template, composed_media(target_info, selection), out_dir)
 
 
@@ -173,12 +178,14 @@ def batch(
     target_dir: Path,
     *,
     donor_dir: Path | None = None,
+    donor_season: Annotated[int | None, Parameter(help="Override the season for every donor file when matching (0 allows specials).")] = None,
     supplemental_info: str | None = None,
     donor_supplemental_info: str | None = None,
     episode_offset: int = 0,
     skip_unmatched: bool = False,
     dry_run: bool = False,
     episode: str | None = None,
+    episode_padding: Annotated[int, Parameter(help="Minimum digits for numeric episode identifiers (at least 2).")] = 2,
     show_name: str | None = None,
     out_dir: Path = Path("premux"),
     out_name: str = "$show$ - $ep$ (premux)",
@@ -214,13 +221,15 @@ def batch(
         output.parent if output else out_dir,
         output.name if output else out_name,
         show_name,
+        episode,
+        episode_padding,
     )
 
     def setup_match(match: BatchMatch, outfile: Path) -> None:
-        info = parse_filename(match.target)
         _setup(
             match.target,
-            episode=episode or (str(info.episode) if info.episode is not None else None),
+            episode=episode or str(match.episode.number),
+            episode_padding=episode_padding,
             show_name=show_name,
             out_dir=outfile.parent,
             out_name=outfile.name,
@@ -231,9 +240,11 @@ def batch(
     result = process_batch(
         target_dir,
         donor_dir=donor_dir,
+        donor_season=donor_season,
         supplemental_info=supplemental_info,
         donor_supplemental_info=donor_supplemental_info,
         episode_offset=episode_offset,
+        episode_padding=episode_padding,
         skip_unmatched=skip_unmatched,
         dry_run=dry_run,
         output_resolver=resolver,
