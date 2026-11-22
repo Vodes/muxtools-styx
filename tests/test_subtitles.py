@@ -102,3 +102,46 @@ def test_restyled_donor_subtitle_applies_only_manual_sync(monkeypatch: pytest.Mo
     )
 
     assert tracks[0].delay == -125
+
+
+@pytest.mark.parametrize(
+    ("codec_name", "title", "flag_hi"),
+    [
+        ("ass", "CC", None),
+        ("ass", "SDH", True),
+        ("subrip", "CC", None),
+        ("subrip", "SDH", True),
+    ],
+)
+def test_transform_subtitles_skips_cc_and_sdh_tracks(monkeypatch: pytest.MonkeyPatch, codec_name: str, title: str, flag_hi: bool | None) -> None:
+    source = Path("donor.mkv")
+    track = cast(
+        TrackInfo,
+        SimpleNamespace(
+            codec_name=codec_name,
+            relative_index=2,
+            index=5,
+            sanitized_lang=_Language(),
+            language="en",
+            title=title,
+            is_default=False,
+            is_forced=False,
+            raw_mkvmerge=SimpleNamespace(properties=SimpleNamespace(flag_hearing_impaired=flag_hi)),
+            raw_ffprobe=SimpleNamespace(disposition={}),
+        ),
+    )
+    warnings: list[str] = []
+    monkeypatch.setattr(subtitles, "warn", lambda message, *_args: warnings.append(message))
+    monkeypatch.setattr(subtitles.SubFile, "from_mkv", lambda *_args, **_kwargs: pytest.fail("should not extract CC/SDH"))
+
+    tracks, fonts, transformed = subtitles.transform_subtitles(
+        (SelectedTrack(track, source),),
+        ("en",),
+        title_for=lambda _selected: "English CC",
+        target_source=Path("target.mkv"),
+    )
+
+    assert tracks == []
+    assert fonts == []
+    assert transformed == set()
+    assert warnings == []

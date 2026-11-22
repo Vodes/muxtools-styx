@@ -12,7 +12,12 @@ from muxtools import TrackInfo
 from muxtools.utils.language_util import standardize_tag
 
 from .matching import SOURCE_NAMES, source_label
-from .selection import SelectedTrack
+from .selection import SelectedTrack, cc_or_sdh_label, is_dubtitle
+
+_IGNORED_SUBTITLE_SUFFIX_RE = re.compile(
+    r"^(?:honorifics|(?:dub[\s-]+)?(?:sdh|cc|closed[\s-]?captions?)|hearing[\s-]?impaired|hard[\s-]?of[\s-]?hearing|hoh|dubtitles?|dub)$",
+    re.IGNORECASE,
+)
 
 
 def display_language(track: TrackInfo) -> str:
@@ -32,7 +37,7 @@ def _track_channels(track: TrackInfo) -> str | None:
     return f"{channels - 1}.1" if "lfe" in layout else f"{channels}.0"
 
 
-def _suffixes_without_honorifics(title: str | None) -> list[str]:
+def _local_provenance_suffixes(title: str | None) -> list[str]:
     if not title:
         return []
     suffixes: list[str] = []
@@ -43,7 +48,7 @@ def _suffixes_without_honorifics(title: str | None) -> list[str]:
             break
         group = match.group(1)
         remaining = remaining[: match.start()].rstrip()
-        if group[1:-1].strip().casefold() != "honorifics":
+        if not _IGNORED_SUBTITLE_SUFFIX_RE.fullmatch(group[1:-1].strip()):
             suffixes.insert(0, group)
     return suffixes
 
@@ -65,7 +70,7 @@ def normalize_subtitle_title(selected: SelectedTrack) -> str:
     track = selected.track
     original = getattr(track, "title", None)
     original = str(original) if original else ""
-    suffixes = _suffixes_without_honorifics(original)
+    suffixes = _local_provenance_suffixes(original)
     local_provenance = " ".join(suffixes)
     base_without_groups = re.sub(r"(?:\[[^\]]*\]|\([^)]*\))\s*$", "", original).strip() if original else ""
     is_signs = (
@@ -73,7 +78,17 @@ def normalize_subtitle_title(selected: SelectedTrack) -> str:
         or bool(getattr(track, "is_forced", False))
         or str(getattr(track, "forced", "")).casefold() == "yes"
     )
-    title = f"{display_language(track)} Signs/Songs" if is_signs else display_language(track)
+    role: str | None
+    if is_signs:
+        role = "Signs/Songs"
+    elif (accessibility := cc_or_sdh_label(track)) is not None:
+        role = accessibility
+    elif is_dubtitle(track):
+        role = "Dubtitles"
+    else:
+        role = None
+
+    title = f"{display_language(track)} {role}" if role else display_language(track)
 
     if local_provenance:
         title = f"{title} {local_provenance}"

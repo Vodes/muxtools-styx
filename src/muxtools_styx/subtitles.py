@@ -22,7 +22,7 @@ from muxtools import (
 )
 
 from .metadata import FixedMetadata
-from .selection import SelectedTrack, canonical_language, canonical_language_tag
+from .selection import SelectedTrack, canonical_language, canonical_language_tag, is_cc_or_sdh
 
 
 def _replace_unknown_styles(subtitle: SubFile) -> None:
@@ -101,6 +101,8 @@ def transform_subtitles(
         if not _language_selected(item, languages):
             continue
         track = item.track
+        if is_cc_or_sdh(track):
+            continue
         if track.codec_name.casefold() != "ass":
             warn(f"Restyling is unsupported for {track.codec_name}; keeping subtitle track {track.relative_index} unchanged.", transform_subtitles)
             continue
@@ -125,13 +127,16 @@ def transform_subtitles(
         language = track.language or "und"
         default = track.is_default
         forced = track.is_forced
+        hearing_impaired: bool | None = None
         if fixed is not None:
-            language, default, forced = fixed[(item.source_file, track.index)]
+            language, default, forced, hearing_impaired = fixed[(item.source_file, track.index)]
+        track_args = ["--hearing-impaired-flag", f"0:{'yes' if hearing_impaired else 'no'}"] if hearing_impaired is not None else None
         output_track = subtitle.to_track(
             title_for(item),
             language,
             default,
             forced,
+            args=track_args,
         )
         if item.source_file != target_source:
             output_track.delay += donor_delay

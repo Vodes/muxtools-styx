@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -90,6 +90,8 @@ class Track:
     language: str
     title: str | None = None
     is_forced: bool = False
+    flag_hearing_impaired: bool | None = None
+    disposition: object = field(default_factory=dict)
     type: str = "AUDIO"
     channels: int = 2
 
@@ -99,7 +101,11 @@ class Track:
 
     @property
     def raw_ffprobe(self) -> SimpleNamespace:
-        return SimpleNamespace(channels=self.channels, channel_layout=None)
+        return SimpleNamespace(channels=self.channels, channel_layout=None, disposition=self.disposition)
+
+    @property
+    def raw_mkvmerge(self) -> SimpleNamespace:
+        return SimpleNamespace(properties=SimpleNamespace(flag_hearing_impaired=self.flag_hearing_impaired))
 
 
 def test_audio_source_alias_and_channels() -> None:
@@ -159,6 +165,43 @@ def test_subtitle_suffix_order_is_preserved_before_source() -> None:
         Path("Show - 01 [CR].mkv"),
     )
     assert normalize_subtitle_title(selected) == "English [sam] (CCC Converted) (Crunchyroll)"
+
+
+@pytest.mark.parametrize(
+    ("language", "title", "hi", "disposition", "expected"),
+    [
+        ("eng", "CC", None, {}, "English CC (Crunchyroll)"),
+        ("eng", "CC", True, {}, "English CC (Crunchyroll)"),
+        ("eng", "English [CC]", None, {}, "English CC (Crunchyroll)"),
+        ("eng", "English (Closed Captions)", None, {}, "English CC (Crunchyroll)"),
+        ("eng", None, None, {"captions": 1}, "English CC (Crunchyroll)"),
+        ("eng", None, None, SimpleNamespace(captions=1, hearing_impaired=0), "English CC (Crunchyroll)"),
+        ("eng", None, None, SimpleNamespace(captions=0, hearing_impaired=1), "English SDH (Crunchyroll)"),
+        ("eng", "SDH", True, {}, "English SDH (Crunchyroll)"),
+        ("ger", "SDH", True, {}, "German SDH (Crunchyroll)"),
+        ("es-419", "Latin American (SDH)", True, {}, "Spanish (Latin America) SDH (Crunchyroll)"),
+        ("es-ES", "European (SDH)", True, {}, "Spanish (Spain) SDH (Crunchyroll)"),
+        ("pt-BR", "Brazilian (SDH)", True, {}, "Portuguese (Brazil) SDH (Crunchyroll)"),
+        ("eng", "English [sam] (SDH)", True, {}, "English SDH [sam] (Crunchyroll)"),
+        ("eng", "English (Hearing Impaired)", None, {}, "English SDH (Crunchyroll)"),
+        ("eng", None, True, {}, "English SDH (Crunchyroll)"),
+        ("eng", "English (Dubtitles)", None, {}, "English Dubtitles (Crunchyroll)"),
+        ("eng", "Dub", None, {}, "English Dubtitles (Crunchyroll)"),
+        ("eng", None, False, {"dub": 1}, "English (Crunchyroll)"),
+    ],
+)
+def test_subtitle_cc_sdh_and_dubtitle_normalization(
+    language: str,
+    title: str | None,
+    hi: bool | None,
+    disposition: object,
+    expected: str,
+) -> None:
+    selected = SelectedTrack(
+        cast(TrackInfo, Track(language, title, flag_hearing_impaired=hi, disposition=disposition, type="SUB")),
+        Path("Show - 01 [CR].mkv"),
+    )
+    assert normalize_subtitle_title(selected) == expected
 
 
 def test_preflight_reports_duplicate_outputs(tmp_path: Path) -> None:

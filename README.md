@@ -18,7 +18,7 @@ The important source-policy flags are:
 
 - `--keep-video`: use donor video instead of target video.
 - `--keep-audio`: append every donor audio track.
-- `--fill-audio`: append donor audio languages absent from the target, plus matching forced/sign tracks. It cannot be combined with `--keep-audio`.
+- `--fill-audio`: append donor audio languages absent from the target, plus matching forced/sign, CC, SDH, and dubtitle companion tracks. It cannot be combined with `--keep-audio`.
 - `--keep-subs`: append every donor subtitle.
 - `--keep-subs-missing-languages`: append donor subtitle languages absent from the target.
 - `--keep-non-english`: append non-English donor subtitles.

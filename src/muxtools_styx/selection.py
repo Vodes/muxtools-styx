@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from muxtools import ParsedFile, TrackInfo, TrackType
 from muxtools.utils.language_util import standardize_tag
@@ -11,6 +13,14 @@ from .audio import choose_best_japanese
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+_SDH_TITLE_RE = re.compile(r"(?<![a-z0-9])sdh(?![a-z0-9])", re.IGNORECASE)
+_CC_TITLE_RE = re.compile(r"(?<![a-z0-9])(?:cc|closed[\s-]?captions?)(?![a-z0-9])", re.IGNORECASE)
+_HI_TITLE_RE = re.compile(
+    r"(?<![a-z0-9])(?:hearing[\s-]?impaired|hard[\s-]?of[\s-]?hearing|hoh)(?![a-z0-9])",
+    re.IGNORECASE,
+)
+_DUBTITLE_TITLE_RE = re.compile(r"(?<![a-z0-9])(?:dubtitles?|dub)(?![a-z0-9])", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -76,7 +86,71 @@ def canonical_language_tag(language: str) -> str:
 
 def is_signs_or_forced(track: TrackInfo) -> bool:
     title = (track.title or "").casefold()
-    return track.is_forced or any(word in title for word in ("sign", "song", "forced"))
+    return bool(getattr(track, "is_forced", False)) or any(word in title for word in ("sign", "song", "forced"))
+
+
+def _disposition_flag(track: TrackInfo, name: str) -> bool:
+    raw_ffprobe = getattr(track, "raw_ffprobe", None)
+    disposition = getattr(raw_ffprobe, "disposition", None)
+    if disposition is None:
+        return False
+    if isinstance(disposition, Mapping):
+        return bool(disposition.get(name, 0))
+    return bool(getattr(disposition, name, 0))
+
+
+def has_hearing_impaired_flag(track: TrackInfo) -> bool:
+    raw_mkvmerge = getattr(track, "raw_mkvmerge", None)
+    properties = getattr(raw_mkvmerge, "properties", None)
+    if getattr(properties, "flag_hearing_impaired", None) is True:
+        return True
+    if _disposition_flag(track, "hearing_impaired"):
+        return True
+    return bool(getattr(track, "is_hearing_impaired", False))
+
+
+def _has_captions_disposition(track: TrackInfo) -> bool:
+    return _disposition_flag(track, "captions")
+
+
+def cc_or_sdh_label(track: TrackInfo) -> Literal["CC", "SDH"] | None:
+    title = str(getattr(track, "title", None) or "")
+    if _SDH_TITLE_RE.search(title):
+        return "SDH"
+    if _CC_TITLE_RE.search(title) or _has_captions_disposition(track):
+        return "CC"
+    if _HI_TITLE_RE.search(title) or has_hearing_impaired_flag(track):
+        return "SDH"
+    return None
+
+
+def is_cc_or_sdh(track: TrackInfo) -> bool:
+    return cc_or_sdh_label(track) is not None
+
+
+def is_dubtitle(track: TrackInfo) -> bool:
+    if is_signs_or_forced(track) or is_cc_or_sdh(track):
+        return False
+    title = str(getattr(track, "title", None) or "")
+    return bool(_DUBTITLE_TITLE_RE.search(title))
+
+
+def is_audio_companion_subtitle(track: TrackInfo) -> bool:
+    return is_signs_or_forced(track) or is_cc_or_sdh(track) or is_dubtitle(track)
+
+
+def _language_matches_audio(track_language: str, audio_languages: set[str]) -> bool:
+    if track_language in audio_languages:
+        return True
+    track_base = track_language.split("-", 1)[0]
+    track_has_subtag = "-" in track_language
+    for audio_language in audio_languages:
+        if audio_language.split("-", 1)[0] != track_base:
+            continue
+        # Allow one-sided regionless fallback without crossing distinct regions/scripts.
+        if track_has_subtag != ("-" in audio_language):
+            return True
+    return False
 
 
 def _select(parsed: ParsedFile, kind: TrackType, supplemental_info: str | None) -> list[SelectedTrack]:
@@ -151,15 +225,19 @@ def select_tracks(
                 raise ValueError(f"donor must contain exactly one video track: {donor.source}")
             video = donor_video
 
+        donor_sub_selection: list[SelectedTrack] = []
         if policy.keep_audio:
             audio = _dedupe([*audio, *donor_audio])
         elif policy.fill_audio:
             present = {canonical_language(item.track) for item in audio}
             introduced = {canonical_language(item.track) for item in donor_audio} - present
             audio.extend(item for item in donor_audio if canonical_language(item.track) in introduced)
-            subtitles.extend(item for item in donor_subs if canonical_language(item.track) in introduced and is_signs_or_forced(item.track))
+            donor_sub_selection.extend(
+                item
+                for item in donor_subs
+                if _language_matches_audio(canonical_language(item.track), introduced) and is_audio_companion_subtitle(item.track)
+            )
 
-        donor_sub_selection: list[SelectedTrack] = []
         if policy.keep_subs:
             donor_sub_selection = donor_subs
         else:
@@ -180,7 +258,13 @@ def select_tracks(
         audio_languages = {canonical_language_tag(language) for language in policy.audio_languages}
         sub_languages = {canonical_language_tag(language) for language in policy.sub_languages}
         audio = [item for item in audio if _matches_language(item, audio_languages)]
-        subtitles = [item for item in subtitles if _matches_language(item, sub_languages)]
+        kept_audio_languages = {canonical_language(item.track) for item in audio}
+        subtitles = [
+            item
+            for item in subtitles
+            if _matches_language(item, sub_languages)
+            or (is_audio_companion_subtitle(item.track) and _language_matches_audio(canonical_language(item.track), kept_audio_languages))
+        ]
 
     if not video:
         raise ValueError("selection removed every video track")

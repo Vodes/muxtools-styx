@@ -12,7 +12,8 @@ from muxtools import AudioFormat, ParsedFile, TrackInfo, TrackType
 from muxtools_styx import metadata as metadata_module
 from muxtools_styx import mux as mux_module
 from muxtools_styx.audio import audio_tier, choose_best_japanese
-from muxtools_styx.metadata import edit_metadata_in_place, fixed_metadata
+from muxtools_styx.inspect import format_inspection
+from muxtools_styx.metadata import edit_metadata_in_place, fixed_metadata, metadata_arguments
 from muxtools_styx.mux import process_mux, resolve_output_template, resolve_setup_output
 from muxtools_styx.selection import MuxOptions, SelectedTrack, Selection, TrackOptions, TransformOptions, is_signs_or_forced, select_tracks
 
@@ -36,6 +37,8 @@ class Track:
     title: str | None = None
     is_default: bool = False
     is_forced: bool = False
+    flag_hearing_impaired: bool | None = None
+    disposition: dict[str, int] = field(default_factory=dict)
     other_tags: dict[str, str] = field(default_factory=dict)
 
     @property
@@ -44,7 +47,11 @@ class Track:
 
     @property
     def raw_ffprobe(self) -> Any:
-        return SimpleNamespace(bit_rate=str(self.bitrate))
+        return SimpleNamespace(bit_rate=str(self.bitrate), disposition=self.disposition)
+
+    @property
+    def raw_mkvmerge(self) -> Any:
+        return SimpleNamespace(properties=SimpleNamespace(flag_hearing_impaired=self.flag_hearing_impaired))
 
     def get_audio_format(self) -> AudioFormat | None:
         return {"aac": AudioFormat.AAC, "eac3": AudioFormat.EAC3}.get(self.codec_name)
@@ -78,6 +85,152 @@ def test_fill_audio_adds_missing_language_and_forced_companion() -> None:
     result = select_tracks(target, donor, MuxOptions(tracks=TrackOptions(fill_audio=True)))
     assert [track.track.language for track in result.audio] == ["ja", "de", "de"]
     assert [track.track.language for track in result.subtitles] == ["de"]
+
+
+def test_fill_audio_keeps_cc_sdh_and_dubtitle_companions_for_introduced_audio() -> None:
+    target = media(
+        "target.mkv",
+        [
+            Track(0, 0, TrackType.VIDEO, "und"),
+            Track(1, 0, TrackType.AUDIO, "ja"),
+            Track(2, 0, TrackType.SUB, "de", title="Full"),
+        ],
+    )
+    donor = media(
+        "donor.mkv",
+        [
+            Track(0, 0, TrackType.VIDEO, "und"),
+            Track(1, 0, TrackType.AUDIO, "ja"),
+            Track(2, 1, TrackType.AUDIO, "en"),
+            Track(3, 0, TrackType.SUB, "en", title=None, disposition={"dub": 1}),
+            Track(4, 1, TrackType.SUB, "en", title="Forced", is_forced=True),
+            Track(5, 2, TrackType.SUB, "en", codec_name="subrip", title="CC"),
+            Track(6, 3, TrackType.SUB, "en", codec_name="subrip", title="SDH", flag_hearing_impaired=True),
+            Track(7, 4, TrackType.SUB, "en", codec_name="ass", title="English (Dubtitles)"),
+            Track(8, 5, TrackType.SUB, "en", title="Full Subtitles (CCC Converted)"),
+            Track(9, 6, TrackType.SUB, "de", codec_name="subrip", title="SDH", flag_hearing_impaired=True),
+        ],
+    )
+    result = select_tracks(target, donor, MuxOptions(tracks=TrackOptions(fill_audio=True)))
+    assert [track.track.language for track in result.audio] == ["ja", "en"]
+    assert [(track.source_file.name, track.track.index) for track in result.subtitles] == [
+        ("target.mkv", 2),
+        ("donor.mkv", 4),
+        ("donor.mkv", 5),
+        ("donor.mkv", 6),
+        ("donor.mkv", 7),
+    ]
+
+
+def test_fill_audio_matches_one_sided_regional_variants_without_crossing_regions() -> None:
+    target = media("target.mkv", [Track(0, 0, TrackType.VIDEO, "und"), Track(1, 0, TrackType.AUDIO, "ja")])
+    donor = media(
+        "donor.mkv",
+        [
+            Track(0, 0, TrackType.VIDEO, "und"),
+            Track(1, 0, TrackType.AUDIO, "fr"),
+            Track(2, 1, TrackType.AUDIO, "en-US"),
+            Track(3, 2, TrackType.AUDIO, "es-419"),
+            Track(4, 0, TrackType.SUB, "fr-FR", title="European (SDH)", flag_hearing_impaired=True),
+            Track(5, 1, TrackType.SUB, "en", title="CC"),
+            Track(6, 2, TrackType.SUB, "es-419", title="Latin American (SDH)", flag_hearing_impaired=True),
+            Track(7, 3, TrackType.SUB, "es-ES", title="European (SDH)", flag_hearing_impaired=True),
+        ],
+    )
+    result = select_tracks(target, donor, MuxOptions(tracks=TrackOptions(fill_audio=True)))
+    assert [track.track.index for track in result.subtitles] == [4, 5, 6]
+
+
+def test_fill_audio_with_keep_subs_missing_languages_still_imports_full_subs() -> None:
+    target = media(
+        "target.mkv",
+        [
+            Track(0, 0, TrackType.VIDEO, "und"),
+            Track(1, 0, TrackType.AUDIO, "ja"),
+            Track(2, 0, TrackType.SUB, "de"),
+        ],
+    )
+    donor = media(
+        "donor.mkv",
+        [
+            Track(0, 0, TrackType.VIDEO, "und"),
+            Track(1, 0, TrackType.AUDIO, "en"),
+            Track(2, 0, TrackType.SUB, "en", title="Full"),
+            Track(3, 1, TrackType.SUB, "en", title="Forced", is_forced=True),
+            Track(4, 2, TrackType.SUB, "en", title="CC"),
+        ],
+    )
+    result = select_tracks(target, donor, MuxOptions(tracks=TrackOptions(fill_audio=True, keep_subs_missing_languages=True)))
+    assert [(track.source_file.name, track.track.index) for track in result.subtitles] == [
+        ("target.mkv", 2),
+        ("donor.mkv", 3),
+        ("donor.mkv", 4),
+        ("donor.mkv", 2),
+    ]
+
+
+def test_remove_unnecessary_keeps_companions_for_kept_audio_and_drops_orphaned_sdh() -> None:
+    target = media(
+        "target.mkv",
+        [
+            Track(0, 0, TrackType.VIDEO, "und"),
+            Track(1, 0, TrackType.AUDIO, "ja"),
+            Track(2, 1, TrackType.AUDIO, "fr"),
+            Track(3, 0, TrackType.SUB, "en", title="Full"),
+            Track(4, 1, TrackType.SUB, "fr-FR", title="European (SDH)", flag_hearing_impaired=True),
+            Track(5, 2, TrackType.SUB, "fr-FR", title="Full"),
+            Track(6, 3, TrackType.SUB, "de", title="SDH", flag_hearing_impaired=True),
+        ],
+    )
+    result = select_tracks(
+        target,
+        None,
+        MuxOptions(tracks=TrackOptions(remove_unnecessary=True, audio_languages=("ja", "fr", "de"), sub_languages=("en",))),
+    )
+    assert [track.track.index for track in result.subtitles] == [3, 4]
+
+
+def test_fixed_metadata_never_defaults_cc_sdh_or_dubtitle_and_sets_hi_flags() -> None:
+    source = Path("donor.mkv")
+    cc = SelectedTrack(cast(TrackInfo, Track(2, 0, TrackType.SUB, "en", title="CC")), source)
+    sdh = SelectedTrack(cast(TrackInfo, Track(3, 1, TrackType.SUB, "en", title="SDH", flag_hearing_impaired=True)), source)
+    dub = SelectedTrack(cast(TrackInfo, Track(4, 2, TrackType.SUB, "en", title="English (Dubtitles)")), source)
+    full = SelectedTrack(cast(TrackInfo, Track(5, 3, TrackType.SUB, "en", title="Full")), source)
+
+    fixed = fixed_metadata((cc, sdh, dub, full))
+    assert fixed[(source, 2)] == ("en", False, False, True)
+    assert fixed[(source, 3)] == ("en", False, False, True)
+    assert fixed[(source, 4)] == ("en", False, False, False)
+    assert fixed[(source, 5)] == ("en", True, False, False)
+
+    args = metadata_arguments([cc, dub, full], normalize_names=False, fix_tags=True, title_for=lambda _item: "", fixed=fixed)
+    assert ["--hearing-impaired-flag", "2:yes"] == args[args.index("--hearing-impaired-flag") : args.index("--hearing-impaired-flag") + 2]
+    assert "4:no" in args
+    assert "5:no" in args
+
+
+def test_format_inspection_includes_hearing_impaired_flag() -> None:
+    text = format_inspection(
+        {
+            "file": "show.mkv",
+            "elements": [],
+            "video": [],
+            "audio": [],
+            "subtitles": [
+                {
+                    "index": 2,
+                    "language": "en",
+                    "codec": "subrip",
+                    "bitrate": None,
+                    "title": "SDH",
+                    "default": False,
+                    "forced": False,
+                    "hearing_impaired": True,
+                }
+            ],
+        }
+    )
+    assert "2: en, subrip, SDH, hearing_impaired" in text
 
 
 def test_conflicting_audio_modes_and_missing_donor_fail() -> None:
@@ -152,6 +305,7 @@ def test_in_place_metadata_uses_relative_type_order_and_removes_track_tags(tmp_p
 
     monkeypatch.setattr(metadata_module, "MKVPropEdit", Editor)
     tracks = (
+        SelectedTrack(cast(TrackInfo, Track(5, 2, TrackType.SUB, "en", title="CC")), target),
         SelectedTrack(cast(TrackInfo, Track(4, 1, TrackType.SUB, "en", title="Full Subtitles")), target),
         SelectedTrack(cast(TrackInfo, Track(3, 1, TrackType.AUDIO, "en")), target),
         SelectedTrack(cast(TrackInfo, Track(0, 0, TrackType.VIDEO, "und")), target),
@@ -162,11 +316,16 @@ def test_in_place_metadata_uses_relative_type_order_and_removes_track_tags(tmp_p
     result = edit_metadata_in_place(target, tracks, normalize_names=False, fix_tags=True, title="Show - 01")
 
     assert result == target
-    assert [kind for kind, _kwargs in calls] == ["info", "video", "audio", "audio", "sub", "sub"]
+    assert [kind for kind, _kwargs in calls] == ["info", "video", "audio", "audio", "sub", "sub", "sub"]
     assert calls[0][1] == {"title": "Show - 01", "muxing_application": None}
     assert all(kwargs["tags"] == {} for _kind, kwargs in calls[1:])
     assert calls[2][1] == {"name": None, "language": "ja", "default": True, "forced": False, "tags": {}}
     assert calls[4][1]["forced"] is True
+    assert calls[4][1]["flag_hearing_impaired"] is False
+    assert calls[5][1]["default"] is True
+    assert calls[5][1]["flag_hearing_impaired"] is False
+    assert calls[6][1]["default"] is False
+    assert calls[6][1]["flag_hearing_impaired"] is True
 
 
 @pytest.mark.parametrize("skip_branding", [False, True])

@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 
 [[package]]
@@ -554,7 +554,7 @@ wheels = [
 
 [[package]]
 name = "muxtools"
-version = "0.5.0b1"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ass" },
@@ -575,12 +575,11 @@ dependencies = [
     { name = "questionary" },
     { name = "rich" },
     { name = "tomlkit" },
-    { name = "typed-ffmpeg-compatible" },
     { name = "videotimestamps" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/32/81/87d05a16f7817e9fc99bea8ab6df6bd1f854391269515dda3ad09116c638/muxtools-0.5.0b1.tar.gz", hash = "sha256:771ffcbbb2032be72d844df9b49fd32f4f65ae7365706baa9eb8ec42051ed7aa", size = 207162, upload-time = "2026-09-29T21:41:38.392Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/25/37/a89c77cf90f9d3ad130fa29ed512fc8885c07c7f1a487ea15eebc25e8e55/muxtools-0.5.0.tar.gz", hash = "sha256:90eded08f75831cf923eaacad2b558b9608cc2b3f4b7185c8491621b6a30be6a", size = 250206, upload-time = "2026-11-09T23:19:02.418Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0c/d3/8b2d93e2867576059a4c4af4a986f19858f372e48bd628d11f0dd1c020ad/muxtools-0.5.0b1-py3-none-any.whl", hash = "sha256:c6bcb94229db4d94b0c6615bfc85d95148abe01ea722ae4695258bdc0e1948f0", size = 130398, upload-time = "2026-09-29T21:41:36.891Z" },
+    { url = "https://files.pythonhosted.org/packages/b2/aa/4eab105b04862270644266316851a8292d6777efcfedbeede1c55110b188/muxtools-0.5.0-py3-none-any.whl", hash = "sha256:e13d4e26e158ca842a5492f004d73ef8fbe010245669103fa43ea473a18e02ab", size = 139608, upload-time = "2026-11-09T23:19:00.45Z" },
 ]
 
 [[package]]
@@ -602,7 +601,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "cyclopts", specifier = ">=5.0.0" },
-    { name = "muxtools", specifier = ">=0.5.0b1" },
+    { name = "muxtools", specifier = ">=0.5.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -975,15 +974,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/96/e07752635b98536177fa1f37671c8f3cdde2e724c6bcf6034b2cfb571565/tomlkit-0.15.1.tar.gz", hash = "sha256:e25bbf38843005246210a12982776f27f99cb9be67160e14434d0c0d21ee1e97", size = 180129, upload-time = "2026-07-17T01:48:04.562Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/13/bc/8c13eb66537dce1d2bd3a57132902f38d0e7f5bb46fa9f4daed9fe9d76ee/tomlkit-0.15.1-py3-none-any.whl", hash = "sha256:177a05aece5a8ca5266fd3c448abb47b8d352f09d477d3ca8332db4d89b24304", size = 49449, upload-time = "2026-07-17T01:48:05.728Z" },
-]
-
-[[package]]
-name = "typed-ffmpeg-compatible"
-version = "3.7.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/d5/6e/10ae1ea1ee255a48039ca6cce5db46b47dd00f4c09c32460b12041e1d7ec/typed_ffmpeg_compatible-3.7.1.tar.gz", hash = "sha256:717f1e7de132405440744eb099ce59518fec9ac5d161fd03d95c59ac600f53ab", size = 274354, upload-time = "2025-10-17T03:00:37.372Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/0f/bb/f093ba252fe4f8810e9370f0b18cbbb9caefad107673cd086564731934cd/typed_ffmpeg_compatible-3.7.1-py3-none-any.whl", hash = "sha256:fb798115eea4df89d611f5f9930cddc5668c4afc9c54d00e548ba46c19fe35e5", size = 292210, upload-time = "2025-10-17T03:00:35.956Z" },
 ]
 
 [[package]]

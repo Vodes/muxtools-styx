@@ -7,6 +7,7 @@ from muxtools import ParsedFile, TrackType
 
 from . import _anitomy
 from .audio import track_bitrate
+from .selection import has_hearing_impaired_flag
 
 
 def inspect_file(path: Path) -> dict[str, Any]:
@@ -28,6 +29,7 @@ def inspect_file(path: Path) -> dict[str, Any]:
                     "title": track.title,
                     "default": track.is_default,
                     "forced": track.is_forced,
+                    "hearing_impaired": has_hearing_impaired_flag(track),
                 }
             )
         return result
@@ -53,7 +55,15 @@ def format_inspection(data: dict[str, Any]) -> str:
         for track in tracks:
             bitrate = f", {track['bitrate']} bps" if track["bitrate"] is not None else ""
             title = f", {track['title']}" if track["title"] else ""
-            flags = ", ".join(flag for flag in ("default" if track["default"] else "", "forced" if track["forced"] else "") if flag)
+            flags = ", ".join(
+                flag
+                for flag in (
+                    "default" if track["default"] else "",
+                    "forced" if track["forced"] else "",
+                    "hearing_impaired" if track.get("hearing_impaired") else "",
+                )
+                if flag
+            )
             suffix = f", {flags}" if flags else ""
             lines.append(f"  {track['index']}: {track['language']}, {track['codec']}{bitrate}{title}{suffix}")
     return "\n".join(lines)
