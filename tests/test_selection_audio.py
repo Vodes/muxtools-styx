@@ -131,14 +131,17 @@ def test_fill_audio_matches_one_sided_regional_variants_without_crossing_regions
             Track(1, 0, TrackType.AUDIO, "fr"),
             Track(2, 1, TrackType.AUDIO, "en-US"),
             Track(3, 2, TrackType.AUDIO, "es-419"),
-            Track(4, 0, TrackType.SUB, "fr-FR", title="European (SDH)", flag_hearing_impaired=True),
-            Track(5, 1, TrackType.SUB, "en", title="CC"),
-            Track(6, 2, TrackType.SUB, "es-419", title="Latin American (SDH)", flag_hearing_impaired=True),
-            Track(7, 3, TrackType.SUB, "es-ES", title="European (SDH)", flag_hearing_impaired=True),
+            Track(4, 3, TrackType.AUDIO, "zh-CN"),
+            Track(5, 0, TrackType.SUB, "fr-FR", title="European (SDH)", flag_hearing_impaired=True),
+            Track(6, 1, TrackType.SUB, "en", title="CC"),
+            Track(7, 2, TrackType.SUB, "es-419", title="Latin American (SDH)", flag_hearing_impaired=True),
+            Track(8, 3, TrackType.SUB, "es-ES", title="European (SDH)", flag_hearing_impaired=True),
+            Track(9, 4, TrackType.SUB, "zh-Hans", title="SDH", flag_hearing_impaired=True),
+            Track(10, 5, TrackType.SUB, "zh-Hant", title="SDH", flag_hearing_impaired=True),
         ],
     )
     result = select_tracks(target, donor, MuxOptions(tracks=TrackOptions(fill_audio=True)))
-    assert [track.track.index for track in result.subtitles] == [4, 5, 6]
+    assert [track.track.index for track in result.subtitles] == [5, 6, 7, 9]
 
 
 def test_fill_audio_with_keep_subs_missing_languages_still_imports_full_subs() -> None:
@@ -260,6 +263,38 @@ def test_language_filter_normalizes_user_aliases() -> None:
     target = media("target.mkv", [Track(0, 0, TrackType.VIDEO, "und"), Track(1, 0, TrackType.AUDIO, "ja")])
     result = select_tracks(target, None, MuxOptions(tracks=TrackOptions(remove_unnecessary=True, audio_languages=("jpn",))))
     assert [track.track.language for track in result.audio] == ["ja"]
+
+
+def test_language_filter_uses_unidirectional_langcodes_hierarchy_and_equivalence() -> None:
+    target = media(
+        "target.mkv",
+        [
+            Track(0, 0, TrackType.VIDEO, "und"),
+            Track(1, 0, TrackType.AUDIO, "ja"),
+            Track(2, 0, TrackType.SUB, "en"),
+            Track(3, 1, TrackType.SUB, "en-US"),
+            Track(4, 2, TrackType.SUB, "de"),
+            Track(5, 3, TrackType.SUB, "de-DE"),
+            Track(6, 4, TrackType.SUB, "es"),
+            Track(7, 5, TrackType.SUB, "es-419"),
+            Track(8, 6, TrackType.SUB, "es-ES"),
+            Track(9, 7, TrackType.SUB, "zh-Hans"),
+            Track(10, 8, TrackType.SUB, "zh-Hans-CN"),
+            Track(11, 9, TrackType.SUB, "zh-Hant"),
+        ],
+    )
+    result = select_tracks(
+        target,
+        None,
+        MuxOptions(
+            tracks=TrackOptions(
+                remove_unnecessary=True,
+                audio_languages=("ja",),
+                sub_languages=("en", "de-DE", "es-419", "zh-CN"),
+            )
+        ),
+    )
+    assert [track.track.language for track in result.subtitles] == ["en", "en-US", "de-DE", "es-419", "zh-Hans", "zh-Hans-CN"]
 
 
 def test_ambiguous_video_and_forced_default_handling() -> None:

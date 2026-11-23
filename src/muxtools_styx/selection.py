@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from langcodes import Language
 from muxtools import ParsedFile, TrackInfo, TrackType
 from muxtools.utils.language_util import standardize_tag
 
@@ -139,18 +140,34 @@ def is_audio_companion_subtitle(track: TrackInfo) -> bool:
     return is_signs_or_forced(track) or is_cc_or_sdh(track) or is_dubtitle(track)
 
 
+def languages_match(query: Language, candidate: Language, *, allow_broader: bool = False) -> bool:
+    if query == candidate:
+        return True
+    if not query.language or query.language != candidate.language:
+        return False
+    query_tag = query.to_tag()
+    candidate_tag = candidate.to_tag()
+    if query_tag in candidate.broader_tags():
+        return True
+    if candidate_tag in query.broader_tags():
+        return allow_broader
+    return query.distance(candidate) == 0
+
+
+def canonical_languages(languages: Iterable[str]) -> tuple[Language, ...]:
+    return tuple(Language.get(canonical_language_tag(language)) for language in languages)
+
+
+def matches_any_language(track: TrackInfo, languages: Iterable[Language], *, allow_broader: bool = False) -> bool:
+    candidate = Language.get(canonical_language(track))
+    return any(languages_match(query, candidate, allow_broader=allow_broader) for query in languages)
+
+
 def _language_matches_audio(track_language: str, audio_languages: set[str]) -> bool:
     if track_language in audio_languages:
         return True
-    track_base = track_language.split("-", 1)[0]
-    track_has_subtag = "-" in track_language
-    for audio_language in audio_languages:
-        if audio_language.split("-", 1)[0] != track_base:
-            continue
-        # Allow one-sided regionless fallback without crossing distinct regions/scripts.
-        if track_has_subtag != ("-" in audio_language):
-            return True
-    return False
+    track_lang = Language.get(track_language)
+    return any(languages_match(Language.get(audio_language), track_lang, allow_broader=True) for audio_language in audio_languages)
 
 
 def _select(parsed: ParsedFile, kind: TrackType, supplemental_info: str | None) -> list[SelectedTrack]:
@@ -166,12 +183,6 @@ def _dedupe(tracks: Iterable[SelectedTrack]) -> list[SelectedTrack]:
             seen.add(key)
             result.append(selected)
     return result
-
-
-def _matches_language(track: SelectedTrack, languages: set[str]) -> bool:
-    language = canonical_language(track.track)
-    base = language.split("-", 1)[0]
-    return language in languages or base in languages
 
 
 def validate_options(options: MuxOptions, donor: Path | None) -> None:
@@ -255,14 +266,14 @@ def select_tracks(
             audio = [item for item in audio if item not in japanese or item == winner]
 
     if policy.remove_unnecessary:
-        audio_languages = {canonical_language_tag(language) for language in policy.audio_languages}
-        sub_languages = {canonical_language_tag(language) for language in policy.sub_languages}
-        audio = [item for item in audio if _matches_language(item, audio_languages)]
+        audio_languages = canonical_languages(policy.audio_languages)
+        sub_languages = canonical_languages(policy.sub_languages)
+        audio = [item for item in audio if matches_any_language(item.track, audio_languages)]
         kept_audio_languages = {canonical_language(item.track) for item in audio}
         subtitles = [
             item
             for item in subtitles
-            if _matches_language(item, sub_languages)
+            if matches_any_language(item.track, sub_languages)
             or (is_audio_companion_subtitle(item.track) and _language_matches_audio(canonical_language(item.track), kept_audio_languages))
         ]
 

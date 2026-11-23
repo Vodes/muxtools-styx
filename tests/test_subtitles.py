@@ -12,8 +12,11 @@ from muxtools_styx.selection import SelectedTrack
 
 
 class _Language:
+    def __init__(self, tag: str = "en") -> None:
+        self._tag = tag
+
     def to_tag(self) -> str:
-        return "en"
+        return self._tag
 
 
 class _Subtitle:
@@ -145,3 +148,39 @@ def test_transform_subtitles_skips_cc_and_sdh_tracks(monkeypatch: pytest.MonkeyP
     assert fonts == []
     assert transformed == set()
     assert warnings == []
+
+
+def test_transform_subtitles_matches_restyle_languages_unidirectionally(monkeypatch: pytest.MonkeyPatch) -> None:
+    source = Path("target.mkv")
+    candidates = tuple(
+        SelectedTrack(
+            cast(
+                TrackInfo,
+                SimpleNamespace(
+                    codec_name="ass",
+                    relative_index=idx,
+                    index=idx + 1,
+                    sanitized_lang=_Language(tag),
+                    language=tag,
+                    title=None,
+                    is_default=False,
+                    is_forced=False,
+                ),
+            ),
+            source,
+        )
+        for idx, tag in enumerate(("en-US", "de", "de-DE", "zh-Hans", "zh-Hant"))
+    )
+    monkeypatch.setattr(subtitles.SubFile, "from_mkv", lambda *_args, **_kwargs: _Subtitle())
+    monkeypatch.setattr(subtitles, "_replace_unknown_styles", lambda _subtitle: None)
+    monkeypatch.setattr(subtitles, "_repair_layout_resolution", lambda _subtitle: None)
+    monkeypatch.setattr(subtitles, "_extract_font_attachments", lambda _source: [])
+
+    _, _, transformed = subtitles.transform_subtitles(
+        candidates,
+        ("en", "de-DE", "zh-CN"),
+        title_for=lambda _selected: "Sub",
+        target_source=source,
+    )
+
+    assert transformed == {(source, 1), (source, 3), (source, 4)}

@@ -22,7 +22,7 @@ from muxtools import (
 )
 
 from .metadata import FixedMetadata
-from .selection import SelectedTrack, canonical_language, canonical_language_tag, is_cc_or_sdh
+from .selection import SelectedTrack, canonical_languages, is_cc_or_sdh, matches_any_language
 
 
 def _replace_unknown_styles(subtitle: SubFile) -> None:
@@ -54,12 +54,6 @@ def _repair_layout_resolution(subtitle: SubFile) -> None:
         assert play_y is not None
         headers.append((ASSHeader.LayoutResY, int(play_y)))
     subtitle.set_headers(*headers)
-
-
-def _language_selected(selected: SelectedTrack, languages: tuple[str, ...]) -> bool:
-    language = canonical_language(selected.track)
-    wanted = {canonical_language_tag(item) for item in languages}
-    return language in wanted or language.split("-", 1)[0] in wanted
 
 
 def _extract_font_attachments(source: Path) -> list[PathLike]:
@@ -97,8 +91,9 @@ def transform_subtitles(
     transformed: set[tuple[Path, int]] = set()
     attachment_fonts: dict[Path, list[PathLike]] = {}
 
+    wanted_languages = canonical_languages(languages)
     for item in selected:
-        if not _language_selected(item, languages):
+        if not matches_any_language(item.track, wanted_languages):
             continue
         track = item.track
         if is_cc_or_sdh(track):
