@@ -23,9 +23,12 @@ SOURCE_NAMES = {
     "AMZ": "Amazon",
     "AMAZON": "Amazon",
     "AMZ-ANV": "Aniverse",
+    "ANIVERSE": "Aniverse",
     "DSNP": "Disney+",
     "D+": "Disney+",
+    "DISNEY+": "Disney+",
     "HIDI": "Hidive",
+    "HIDIVE": "Hidive",
     "BILI": "Bilibili",
     "BILIBILI": "Bilibili",
     "BILIBILI COM": "Bilibili",
@@ -34,7 +37,7 @@ SOURCE_NAMES = {
     "NF": "Netflix",
     "NETFLIX": "Netflix",
 }
-_UNCLASSIFIED_SOURCE_NAMES = {alias: SOURCE_NAMES[alias] for alias in ("AMZ-ANV", "AMZ", "D+", "BSITE")}
+_UNCLASSIFIED_SOURCE_NAMES = {alias: SOURCE_NAMES[alias] for alias in ("AMZ-ANV", "ANIVERSE", "AMZ", "AMAZON", "D+", "DISNEY+", "BSITE")}
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +77,7 @@ class FilenameInfo:
     source: str | None = None
     release_group: str | None = None
     multi_episode: bool = False
+    raw_episode: str | None = None
 
     @property
     def key(self) -> EpisodeKey | None:
@@ -137,14 +141,14 @@ def _int_value(value: object) -> int | None:
     return int(text)
 
 
-def _find_int(elements: Sequence[Element], kind: ElementKind) -> tuple[int | None, bool]:
+def _find_int(elements: Sequence[Element], kind: ElementKind) -> int | None:
     for element in elements:
         if element.kind is not kind:
             continue
         number = _int_value(element.value)
         if number is not None:
-            return number, False
-    return None, False
+            return number
+    return None
 
 
 def parse_filename(path: str | Path) -> FilenameInfo:
@@ -153,10 +157,11 @@ def parse_filename(path: str | Path) -> FilenameInfo:
     path = Path(path)
     elements = tuple(parse(path.name))
     episode_values = element_values(elements, ElementKind.EPISODE)
-    episode, multi = _find_int(elements, ElementKind.EPISODE)
-    multi = multi or len(episode_values) > 1
-    season, season_multi = _find_int(elements, ElementKind.SEASON)
-    multi = multi or season_multi
+    season_values = element_values(elements, ElementKind.SEASON)
+    episode = _find_int(elements, ElementKind.EPISODE)
+    season = _find_int(elements, ElementKind.SEASON)
+    multi = len(episode_values) > 1 or len(season_values) > 1
+    raw_episode = episode_values[0].strip() if len(episode_values) == 1 and episode_values[0].strip() else None
 
     title_element = first_element(elements, ElementKind.TITLE)
     source_element = first_element(elements, ElementKind.SOURCE)
@@ -165,7 +170,7 @@ def parse_filename(path: str | Path) -> FilenameInfo:
     source = element_value(source_element).strip() if source_element is not None else None
     release_group = element_value(group_element).strip() if group_element is not None else None
 
-    return FilenameInfo(path, elements, title or None, season, episode, source or None, release_group or None, multi)
+    return FilenameInfo(path, elements, title or None, season, episode, source or None, release_group or None, multi, raw_episode)
 
 
 def parse_episode_key(path: str | Path) -> EpisodeKey | None:
@@ -180,17 +185,20 @@ def format_episode(episode: str | int, padding: int = 2) -> str:
     return value.zfill(padding) if value.isdecimal() else value
 
 
-def source_label(path: str | Path, supplemental_info: str | None = None) -> str | None:
-    for source_text in (path, supplemental_info):
-        if source_text is None:
-            continue
-        for value in element_values(parse_filename(source_text).elements, ElementKind.SOURCE):
-            source = value.strip().strip("[](){}").strip()
-            if label := SOURCE_NAMES.get(source.upper()):
-                return label
-        tokens = re.split(r"[\s._,\[\](){}]+", Path(source_text).name.upper())
-        if label := next((_UNCLASSIFIED_SOURCE_NAMES[token] for token in tokens if token in _UNCLASSIFIED_SOURCE_NAMES), None):
+def _source_label_from_text(text: str) -> str | None:
+    for value in element_values(parse(text), ElementKind.SOURCE):
+        source = value.strip().strip("[](){}").strip()
+        if label := SOURCE_NAMES.get(source.upper()):
             return label
+    tokens = re.split(r"[\s._,/\\\[\](){}]+", text.upper())
+    return next((_UNCLASSIFIED_SOURCE_NAMES[token] for token in tokens if token in _UNCLASSIFIED_SOURCE_NAMES), None)
+
+
+def source_label(path: str | Path, supplemental_info: str | None = None) -> str | None:
+    if label := _source_label_from_text(Path(path).name):
+        return label
+    if supplemental_info:
+        return _source_label_from_text(supplemental_info)
     return None
 
 

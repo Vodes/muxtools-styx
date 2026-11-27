@@ -14,10 +14,9 @@ from muxtools_styx.mux import resolve_setup_output
 from muxtools_styx.selection import Selection
 
 
-@pytest.mark.parametrize("command", ["mux", "batch"])
+@pytest.mark.parametrize(("command", "episode_override"), [("mux", None), ("mux", "7"), ("batch", None)])
 @pytest.mark.parametrize("padding", [None, 3])
 @pytest.mark.parametrize("custom_templates", [False, True])
-@pytest.mark.parametrize("episode_override", [None, "7"])
 def test_cli_episode_padding_in_filename_and_title(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -71,6 +70,13 @@ def test_cli_rejects_episode_padding_below_two(tmp_path: Path, command: str, pad
         cli.app([command, str(tmp_path), "--episode-padding", str(padding)])
 
 
+@pytest.mark.parametrize("flag", ["--episode", "-o", "--output"])
+def test_batch_rejects_single_file_flags(tmp_path: Path, flag: str) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli.app(["batch", str(tmp_path), flag, "01"])
+    assert exc_info.value.code == 2
+
+
 @pytest.mark.parametrize("episode", ["123", "0001", "OVA"])
 def test_cli_preserves_long_episode_numbers_and_labels(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, episode: str) -> None:
     monkeypatch.chdir(tmp_path)
@@ -85,3 +91,70 @@ def test_cli_preserves_long_episode_numbers_and_labels(tmp_path: Path, monkeypat
         clean_work_dirs=True,
     )
     assert setup.episode == episode
+
+
+@pytest.mark.parametrize(("filename", "expected"), [("Show - 07.5.mkv", "07.5"), ("Show 4a.mkv", "4a")])
+def test_cli_infers_non_integer_episode_labels(filename: str, expected: str) -> None:
+    episode, _show = cli._infer_episode_and_show(Path(filename), None, None, 2)
+    assert episode == expected
+
+
+def test_cli_mux_explicit_out_dir_disables_in_place_and_in_place_skips_workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("vof_setup", "{}")
+    target = tmp_path / "Show - 01.mkv"
+    target.touch()
+    seen: list[dict[str, object]] = []
+
+    def fake_mux(path: Path, **kwargs: object) -> Path:
+        seen.append({"path": path, **kwargs})
+        return path
+
+    monkeypatch.setattr(cli, "process_mux", fake_mux)
+
+    cli.app(["mux", str(target), "--fix-tags"], result_action="return_value")
+    assert seen[-1]["allow_implicit_in_place"] is True
+    assert not (tmp_path / "_workdir").exists()
+
+    cli.app(["mux", str(target), "--fix-tags", "--out-dir", str(tmp_path / "stage")], result_action="return_value")
+    assert seen[-1]["allow_implicit_in_place"] is False
+    assert (tmp_path / "_workdir").exists()
+
+
+def test_cli_validation_failure_does_not_create_workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("vof_setup", "{}")
+    target = tmp_path / "Show - 01.mkv"
+    target.touch()
+    with pytest.raises(ValueError, match="requires a donor"):
+        cli.app(["mux", str(target), "--keep-video"], result_action="return_value")
+    assert not (tmp_path / "_workdir").exists()
+
+    with pytest.raises(FileNotFoundError):
+        cli.app(["mux", str(tmp_path / "missing - 01.mkv")], result_action="return_value")
+    assert not (tmp_path / "_workdir").exists()
+
+
+def test_json_mode_routes_muxtools_logs_to_stderr(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    import json
+    import sys
+
+    from muxtools import warn
+    from muxtools.utils.log import logger as muxtools_logger
+
+    monkeypatch.setattr(muxtools_logger, "handlers", list(muxtools_logger.handlers))
+    target = tmp_path / "Show - 01.mkv"
+    target.touch()
+
+    def fake_mux(path: Path, **_kwargs: object) -> Path:
+        warn("diagnostic message", fake_mux)
+        return path
+
+    monkeypatch.setattr(cli, "process_mux", fake_mux)
+    monkeypatch.setattr(sys, "argv", ["muxtools-styx", "--json", "mux", str(target), "--fix-tags"])
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main()
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {"output": str(target.resolve())}
+    assert "diagnostic message" in captured.err

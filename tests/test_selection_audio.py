@@ -54,7 +54,12 @@ class Track:
         return SimpleNamespace(properties=SimpleNamespace(flag_hearing_impaired=self.flag_hearing_impaired))
 
     def get_audio_format(self) -> AudioFormat | None:
-        return {"aac": AudioFormat.AAC, "eac3": AudioFormat.EAC3}.get(self.codec_name)
+        return {
+            "aac": AudioFormat.AAC,
+            "eac3": AudioFormat.EAC3,
+            "flac": AudioFormat.FLAC,
+            "opus": AudioFormat.OPUS,
+        }.get(self.codec_name)
 
 
 class Media:
@@ -166,9 +171,9 @@ def test_fill_audio_with_keep_subs_missing_languages_still_imports_full_subs() -
     result = select_tracks(target, donor, MuxOptions(tracks=TrackOptions(fill_audio=True, keep_subs_missing_languages=True)))
     assert [(track.source_file.name, track.track.index) for track in result.subtitles] == [
         ("target.mkv", 2),
+        ("donor.mkv", 2),
         ("donor.mkv", 3),
         ("donor.mkv", 4),
-        ("donor.mkv", 2),
     ]
 
 
@@ -318,10 +323,12 @@ def test_fixed_metadata_has_one_default_per_language_across_sources() -> None:
 def test_in_place_metadata_uses_relative_type_order_and_removes_track_tags(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     target = tmp_path / "target.mkv"
     calls: list[tuple[str, dict[str, object]]] = []
+    editor_init: list[dict[str, object]] = []
 
     class Editor:
-        def __init__(self, path: Path) -> None:
+        def __init__(self, path: Path, **kwargs: object) -> None:
             assert path == target
+            editor_init.append(kwargs)
 
         def audio_track(self, **kwargs: object) -> None:
             calls.append(("audio", kwargs))
@@ -351,6 +358,7 @@ def test_in_place_metadata_uses_relative_type_order_and_removes_track_tags(tmp_p
     result = edit_metadata_in_place(target, tracks, normalize_names=False, fix_tags=True, title="Show - 01")
 
     assert result == target
+    assert editor_init == [{"tags": {}}, {"track_statistics": True}]
     assert [kind for kind, _kwargs in calls] == ["info", "video", "audio", "audio", "sub", "sub", "sub"]
     assert calls[0][1] == {"title": "Show - 01", "muxing_application": None}
     assert all(kwargs["tags"] == {} for _kind, kwargs in calls[1:])
@@ -410,8 +418,196 @@ def test_documented_best_audio_tiers() -> None:
 
 def test_unknown_codec_does_not_win_on_bitrate() -> None:
     known = SelectedTrack(cast(TrackInfo, Track(1, 0, TrackType.AUDIO, "ja", "aac", 128_000)), Path("target.mkv"))
-    unknown = SelectedTrack(cast(TrackInfo, Track(1, 0, TrackType.AUDIO, "ja", "flac", 1_500_000)), Path("donor.mkv"))
+    unknown = SelectedTrack(cast(TrackInfo, Track(1, 0, TrackType.AUDIO, "ja", "unknown", 1_500_000)), Path("donor.mkv"))
     assert choose_best_japanese([known, unknown]) is known
+
+
+def test_lossless_beats_lossy_and_unclassified_target_wins_conservatively() -> None:
+    aac = SelectedTrack(cast(TrackInfo, Track(1, 0, TrackType.AUDIO, "ja", "aac", 256_000)), Path("target.mkv"))
+    flac_target = SelectedTrack(cast(TrackInfo, Track(1, 0, TrackType.AUDIO, "ja", "flac", 900_000)), Path("target.mkv"))
+    flac_donor = SelectedTrack(cast(TrackInfo, Track(1, 0, TrackType.AUDIO, "ja", "flac", 1_500_000)), Path("donor.mkv"))
+    opus = SelectedTrack(cast(TrackInfo, Track(1, 0, TrackType.AUDIO, "ja", "opus", 192_000)), Path("target.mkv"))
+    nf_eac3 = SelectedTrack(cast(TrackInfo, Track(1, 0, TrackType.AUDIO, "ja", "eac3", 640_000)), Path("Show [NF].mkv"))
+    assert choose_best_japanese([aac, flac_donor]) is flac_donor
+    assert choose_best_japanese([flac_target, flac_donor]) is flac_target
+    assert choose_best_japanese([opus, aac]) is opus
+    assert choose_best_japanese([nf_eac3, aac]) is nf_eac3
+    assert choose_best_japanese([opus, flac_donor]) is flac_donor
+
+
+def test_best_audio_compares_donor_in_default_and_fill_audio_modes() -> None:
+    target = media(
+        "target.mkv",
+        [
+            Track(0, 0, TrackType.VIDEO, "und"),
+            Track(1, 0, TrackType.AUDIO, "ja", "aac", 128_000),
+            Track(2, 1, TrackType.AUDIO, "en", "aac", 128_000),
+        ],
+    )
+    donor = media(
+        "donor.mkv",
+        [
+            Track(0, 0, TrackType.VIDEO, "und"),
+            Track(1, 0, TrackType.AUDIO, "ja", "aac", 256_000),
+            Track(2, 1, TrackType.AUDIO, "de", "aac", 192_000),
+        ],
+    )
+    default_best = select_tracks(target, donor, MuxOptions(tracks=TrackOptions(best_audio=True)))
+    assert [(item.source_file.name, item.track.language) for item in default_best.audio] == [
+        ("donor.mkv", "ja"),
+        ("target.mkv", "en"),
+    ]
+    fill_best = select_tracks(target, donor, MuxOptions(tracks=TrackOptions(fill_audio=True, best_audio=True)))
+    assert [(item.source_file.name, item.track.language) for item in fill_best.audio] == [
+        ("donor.mkv", "ja"),
+        ("target.mkv", "en"),
+        ("donor.mkv", "de"),
+    ]
+
+
+def test_fill_audio_and_missing_subs_use_language_matching_and_full_sub_check() -> None:
+    target = media(
+        "target.mkv",
+        [
+            Track(0, 0, TrackType.VIDEO, "und"),
+            Track(1, 0, TrackType.AUDIO, "en"),
+            Track(2, 0, TrackType.SUB, "de", title="Signs", is_forced=True),
+            Track(3, 1, TrackType.SUB, "en", title="Full"),
+        ],
+    )
+    donor = media(
+        "donor.mkv",
+        [
+            Track(0, 0, TrackType.VIDEO, "und"),
+            Track(1, 0, TrackType.AUDIO, "en-US"),
+            Track(2, 0, TrackType.SUB, "en-US", title="Full"),
+            Track(3, 1, TrackType.SUB, "de", title="Full"),
+            Track(4, 2, TrackType.SUB, "de", title="Forced", is_forced=True),
+        ],
+    )
+    result = select_tracks(target, donor, MuxOptions(tracks=TrackOptions(fill_audio=True, keep_subs_missing_languages=True)))
+    assert [(item.source_file.name, item.track.language) for item in result.audio] == [("target.mkv", "en")]
+    assert [(item.source_file.name, item.track.index) for item in result.subtitles] == [
+        ("target.mkv", 2),
+        ("target.mkv", 3),
+        ("donor.mkv", 3),
+    ]
+
+
+def test_remove_unnecessary_requires_audio_for_all_companions_and_handles_enm() -> None:
+    target = media(
+        "target.mkv",
+        [
+            Track(0, 0, TrackType.VIDEO, "und"),
+            Track(1, 0, TrackType.AUDIO, "ja"),
+            Track(2, 0, TrackType.SUB, "en", title="Full"),
+            Track(3, 1, TrackType.SUB, "enm", title="Full (Honorifics)"),
+            Track(4, 2, TrackType.SUB, "de", title="Full"),
+            Track(5, 3, TrackType.SUB, "de", title="Signs", is_forced=True),
+            Track(6, 4, TrackType.SUB, "de", title="SDH", flag_hearing_impaired=True),
+            Track(7, 5, TrackType.SUB, "en", title="English (Dubtitles)"),
+        ],
+    )
+    result = select_tracks(
+        target,
+        None,
+        MuxOptions(tracks=TrackOptions(remove_unnecessary=True, audio_languages=("ja", "en", "de"), sub_languages=("en", "de"))),
+    )
+    assert [item.track.index for item in result.subtitles] == [2, 3, 4]
+
+    opt_out = select_tracks(
+        target,
+        None,
+        MuxOptions(
+            tracks=TrackOptions(remove_unnecessary=True, audio_languages=("ja",), sub_languages=("en", "de")),
+            treat_enm_as_english=False,
+        ),
+    )
+    assert [item.track.index for item in opt_out.subtitles] == [2, 4]
+
+    fixed = fixed_metadata(result.subtitles)
+    assert fixed[(target.source, 2)] == ("en", True, False, False)
+    assert fixed[(target.source, 3)] == ("enm", False, False, False)
+
+
+def test_is_signs_or_forced_avoids_substring_false_positives() -> None:
+    assert is_signs_or_forced(cast(TrackInfo, Track(2, 0, TrackType.SUB, "en", title="English (Forced)")))
+    assert is_signs_or_forced(cast(TrackInfo, Track(2, 0, TrackType.SUB, "en", title="English (Force)")))
+    assert not is_signs_or_forced(cast(TrackInfo, Track(2, 0, TrackType.SUB, "en", title="English [FansubDesign]")))
+    assert not is_signs_or_forced(cast(TrackInfo, Track(2, 0, TrackType.SUB, "en", title="English (Unforced)")))
+
+
+def test_attached_pic_cover_art_and_keep_video_and_donor_audio() -> None:
+    target = media(
+        "target.mkv",
+        [
+            Track(0, 0, TrackType.VIDEO, "und"),
+            Track(1, 1, TrackType.VIDEO, "und", disposition={"attached_pic": 1}),
+        ],
+    )
+    donor = media(
+        "donor.mkv",
+        [
+            Track(0, 0, TrackType.VIDEO, "und"),
+            Track(1, 0, TrackType.AUDIO, "ja"),
+        ],
+    )
+    result = select_tracks(target, donor, MuxOptions(tracks=TrackOptions(keep_audio=True)))
+    assert [item.track.index for item in result.video] == [0]
+    assert [item.source_file.name for item in result.audio] == ["donor.mkv"]
+
+
+def test_donor_equals_target_raises() -> None:
+    target = media("same.mkv", [Track(0, 0, TrackType.VIDEO, "und"), Track(1, 0, TrackType.AUDIO, "ja")])
+    with pytest.raises(ValueError, match="cannot be the same"):
+        select_tracks(target, target, MuxOptions(tracks=TrackOptions(keep_audio=True)))
+
+
+def test_literal_dollar_in_output_template_is_allowed(tmp_path: Path) -> None:
+    result = resolve_output_template("$100 Girlfriend - 01", cast(ParsedFile, object()), tmp_path)
+    assert result == tmp_path / "$100 Girlfriend - 01.mkv"
+    with pytest.raises(ValueError, match="unresolved output token"):
+        resolve_output_template("Show - $unknown$", cast(ParsedFile, object()), tmp_path)
+
+
+def test_can_edit_in_place_ignores_unused_languages_and_tpp(tmp_path: Path) -> None:
+    target = tmp_path / "target.mkv"
+    options = MuxOptions(
+        tracks=TrackOptions(audio_languages=("ja",), sub_languages=("de",)),
+        transforms=TransformOptions(fix_tags=True, restyle_languages=("de",), tpp=True),
+    )
+    assert mux_module.can_edit_in_place(options, None, None, target, allow_implicit_in_place=True)
+    assert not mux_module.can_edit_in_place(options, None, None, target, allow_implicit_in_place=False)
+    assert mux_module.can_edit_in_place(options, None, target, target, allow_implicit_in_place=False)
+
+
+def test_build_mux_inputs_preserves_chapters_track_order_and_tags(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target = tmp_path / "target.mkv"
+    donor = tmp_path / "donor.mkv"
+    target.touch()
+    donor.touch()
+    recorded: list[dict[str, object]] = []
+
+    class FakePremux:
+        def __init__(self, source: Path, **kwargs: object) -> None:
+            self.source = source
+            self.args = list(cast(list[str], kwargs.get("mkvmerge_args", [])))
+            recorded.append({"source": source, **kwargs})
+
+    monkeypatch.setattr(mux_module, "Premux", FakePremux)
+
+    donor_video = SelectedTrack(cast(TrackInfo, Track(0, 0, TrackType.VIDEO, "und")), donor)
+    donor_audio = SelectedTrack(cast(TrackInfo, Track(1, 0, TrackType.AUDIO, "ja")), donor)
+    selection = Selection((donor_video,), (donor_audio,), (), target)
+    inputs = mux_module.build_mux_inputs(selection, MuxOptions(transforms=TransformOptions(fix_tags=True)))
+
+    assert len(recorded) == 2
+    assert recorded[0]["source"] == donor
+    assert recorded[1]["source"] == target
+    assert recorded[1]["keep_chapters"] is True
+    assert "--no-global-tags" in cast(list[str], recorded[0]["mkvmerge_args"])
+    assert "--no-track-tags" in cast(list[str], recorded[0]["mkvmerge_args"])
+    assert inputs[0].args[:2] == ["--track-order", "0:0,0:1"]
 
 
 def test_supplemental_source_is_used_for_amazon_audio_tier() -> None:
@@ -508,3 +704,41 @@ def test_content_changing_mux_cannot_use_input_as_output(tmp_path: Path, monkeyp
 
     with pytest.raises(ValueError, match="output may equal the input"):
         process_mux(target, options=MuxOptions(transforms=TransformOptions(restyle_subs=True)), outfile=target, overwrite=True)
+
+    monkeypatch.setattr(mux_module, "resolve_setup_output", lambda *_args: target.resolve())
+    with pytest.raises(ValueError, match="output may equal the input"):
+        process_mux(target, options=MuxOptions(transforms=TransformOptions(restyle_subs=True)), overwrite=True)
+
+    donor = tmp_path / "donor.mkv"
+    donor.touch()
+    with pytest.raises(ValueError, match="cannot overwrite the donor"):
+        process_mux(target, donor=donor, options=MuxOptions(tracks=TrackOptions(keep_audio=True)), outfile=donor, overwrite=True)
+
+
+def test_in_place_explicit_mkv_title_is_not_cleaned_twice(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target = tmp_path / ".hack Sign - 01.mkv"
+    target.touch()
+    selection = Selection(
+        (SelectedTrack(cast(TrackInfo, Track(0, 0, TrackType.VIDEO, "und")), target),),
+        (SelectedTrack(cast(TrackInfo, Track(1, 0, TrackType.AUDIO, "ja")), target),),
+        (),
+        target,
+    )
+    titles: list[str | None] = []
+    monkeypatch.setattr(
+        mux_module.ParsedFile,
+        "from_file",
+        lambda *_args: cast(ParsedFile, SimpleNamespace(container_info=SimpleNamespace(raw_mkvmerge=None))),
+    )
+    monkeypatch.setattr(mux_module, "select_tracks", lambda *_args, **_kwargs: selection)
+    monkeypatch.setattr(
+        mux_module,
+        "edit_metadata_in_place",
+        lambda path, *_args, **kwargs: titles.append(kwargs.get("title")) or path,
+    )
+    process_mux(
+        target,
+        options=MuxOptions(transforms=TransformOptions(fix_tags=True)),
+        explicit_mkv_title=".hack//Sign - 01",
+    )
+    assert titles == [".hack//Sign - 01"]

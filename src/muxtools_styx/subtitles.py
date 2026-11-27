@@ -77,6 +77,31 @@ def _extract_font_attachments(source: Path) -> list[PathLike]:
     return fonts
 
 
+def _disambiguate_extracted_sub(subtitle: SubFile, source: Path, track_index: int) -> None:
+    sub_file = getattr(subtitle, "file", None)
+    if not isinstance(sub_file, Path) or not sub_file.exists():
+        return
+    source_key = hashlib.sha256(str(source.resolve()).encode()).hexdigest()[:12]
+    unique = sub_file.with_name(f"{source.stem}-{source_key}_{track_index}{sub_file.suffix}")
+    if unique != sub_file:
+        sub_file.replace(unique)
+        subtitle.file = unique
+
+
+def _will_restyle(item: SelectedTrack, wanted_languages: tuple[Any, ...], *, treat_enm_as_english: bool) -> bool:
+    return (
+        matches_any_language(item.track, wanted_languages, treat_enm_as_english=treat_enm_as_english)
+        and not is_cc_or_sdh(item.track)
+        and item.track.codec_name.casefold() == "ass"
+    )
+
+
+def _file_sha256(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def transform_subtitles(
     selected: tuple[SelectedTrack, ...],
     languages: tuple[str, ...],
@@ -85,15 +110,32 @@ def transform_subtitles(
     target_source: Path,
     donor_delay: int = 0,
     fixed: FixedMetadata | None = None,
+    treat_enm_as_english: bool = True,
 ) -> tuple[list[SubTrack], list[FontFile], set[tuple[Path, int]]]:
     tracks: list[SubTrack] = []
-    fonts_by_path: dict[Path, FontFile] = {}
+    fonts_by_key: dict[str, FontFile] = {}
     transformed: set[tuple[Path, int]] = set()
     attachment_fonts: dict[Path, list[PathLike]] = {}
 
     wanted_languages = canonical_languages(languages)
+    planned_restyle = {
+        (item.source_file, item.track.index) for item in selected if _will_restyle(item, wanted_languages, treat_enm_as_english=treat_enm_as_english)
+    }
+    kept_attachment_sources = {
+        item.source_file
+        for item in selected
+        if (item.source_file, item.track.index) not in planned_restyle and item.track.codec_name.casefold() in {"ass", "ssa"}
+    }
+    kept_container_hashes: set[str] = set()
+    if planned_restyle:
+        for kept_source in kept_attachment_sources:
+            attachment_fonts[kept_source] = _extract_font_attachments(kept_source)
+            for path in attachment_fonts[kept_source]:
+                if path is not None and (digest := _file_sha256(Path(path))) is not None:
+                    kept_container_hashes.add(digest)
+
     for item in selected:
-        if not matches_any_language(item.track, wanted_languages):
+        if not matches_any_language(item.track, wanted_languages, treat_enm_as_english=treat_enm_as_english):
             continue
         track = item.track
         if is_cc_or_sdh(track):
@@ -105,6 +147,7 @@ def transform_subtitles(
         # mkvextract writes the container timestamps into ASS events; carrying the
         # reported container delay into SubTrack would apply it a second time.
         subtitle = SubFile.from_mkv(item.source_file, track.relative_index, preserve_delay=False)
+        _disambiguate_extracted_sub(subtitle, item.source_file, track.index)
         subtitle.unfuck_cr(
             alt_styles=["overlap", "subtitle-2"],
             dialogue_styles=["main", "default", "narrator", "narration", "subtitle", "bd dx"],
@@ -118,8 +161,12 @@ def transform_subtitles(
             attachment_fonts[item.source_file] = _extract_font_attachments(item.source_file)
         source_fonts = attachment_fonts[item.source_file]
         for font in subtitle.collect_fonts(search_current_dir=False, additional_fonts=source_fonts):
-            fonts_by_path[font.file.resolve()] = font
-        language = track.language or "und"
+            resolved = font.file.resolve()
+            digest = _file_sha256(resolved)
+            if digest is not None and digest in kept_container_hashes:
+                continue
+            fonts_by_key[digest or str(resolved)] = font
+        language = track.sanitized_lang.to_tag() or "und"
         default = track.is_default
         forced = track.is_forced
         hearing_impaired: bool | None = None
@@ -138,4 +185,4 @@ def transform_subtitles(
         tracks.append(output_track)
         transformed.add((item.source_file, track.index))
 
-    return tracks, list(fonts_by_path.values()), transformed
+    return tracks, list(fonts_by_key.values()), transformed

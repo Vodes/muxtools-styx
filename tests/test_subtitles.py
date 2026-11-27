@@ -184,3 +184,164 @@ def test_transform_subtitles_matches_restyle_languages_unidirectionally(monkeypa
     )
 
     assert transformed == {(source, 1), (source, 3), (source, 4)}
+
+
+def test_transform_subtitles_preserves_bcp47_subtag_without_fix_tags(monkeypatch: pytest.MonkeyPatch) -> None:
+    source = Path("target.mkv")
+    track = cast(
+        TrackInfo,
+        SimpleNamespace(
+            codec_name="ass",
+            relative_index=0,
+            index=2,
+            sanitized_lang=_Language("es-419"),
+            language="spa",
+            title=None,
+            is_default=False,
+            is_forced=False,
+        ),
+    )
+    captured_languages: list[str] = []
+
+    class RecordingSub(_Subtitle):
+        def to_track(self, _name: str, language: str, *_args: Any, **_kwargs: Any) -> Any:
+            captured_languages.append(language)
+            return SimpleNamespace(delay=0)
+
+    monkeypatch.setattr(subtitles.SubFile, "from_mkv", lambda *_args, **_kwargs: RecordingSub())
+    monkeypatch.setattr(subtitles, "_replace_unknown_styles", lambda _subtitle: None)
+    monkeypatch.setattr(subtitles, "_repair_layout_resolution", lambda _subtitle: None)
+    monkeypatch.setattr(subtitles, "_extract_font_attachments", lambda _source: [])
+
+    subtitles.transform_subtitles(
+        (SelectedTrack(track, source),),
+        ("es",),
+        title_for=lambda _selected: "Spanish",
+        target_source=source,
+    )
+    assert captured_languages == ["es-419"]
+
+
+def test_transform_subtitles_enm_opt_out_and_disambiguation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target = tmp_path / "a" / "ep01.mkv"
+    donor = tmp_path / "b" / "ep01.mkv"
+    track_enm = cast(
+        TrackInfo,
+        SimpleNamespace(
+            codec_name="ass",
+            relative_index=0,
+            index=2,
+            sanitized_lang=_Language("enm"),
+            language="enm",
+            title=None,
+            is_default=False,
+            is_forced=False,
+        ),
+    )
+    track_en = cast(
+        TrackInfo,
+        SimpleNamespace(
+            codec_name="ass",
+            relative_index=0,
+            index=2,
+            sanitized_lang=_Language("en"),
+            language="en",
+            title=None,
+            is_default=False,
+            is_forced=False,
+        ),
+    )
+    extracted_paths: list[Path] = []
+
+    class FileSub(_Subtitle):
+        def __init__(self, path: Path) -> None:
+            self.file = path
+
+        def to_track(self, *_args: Any, **_kwargs: Any) -> Any:
+            extracted_paths.append(self.file)
+            return SimpleNamespace(delay=0)
+
+    def fake_extract(source: Path, _rel: int, *, preserve_delay: bool) -> FileSub:
+        assert not preserve_delay
+        shared = tmp_path / f"{source.stem}_2.ass"
+        shared.write_text(str(source), encoding="utf-8")
+        return FileSub(shared)
+
+    monkeypatch.setattr(subtitles.SubFile, "from_mkv", fake_extract)
+    monkeypatch.setattr(subtitles, "_replace_unknown_styles", lambda _subtitle: None)
+    monkeypatch.setattr(subtitles, "_repair_layout_resolution", lambda _subtitle: None)
+    monkeypatch.setattr(subtitles, "_extract_font_attachments", lambda _source: [])
+
+    _, _, transformed_default = subtitles.transform_subtitles(
+        (SelectedTrack(track_enm, target), SelectedTrack(track_en, donor)),
+        ("en",),
+        title_for=lambda _selected: "Sub",
+        target_source=target,
+    )
+    assert transformed_default == {(target, 2), (donor, 2)}
+    assert len(set(extracted_paths)) == 2
+    assert extracted_paths[0].read_text(encoding="utf-8") == str(target)
+    assert extracted_paths[1].read_text(encoding="utf-8") == str(donor)
+
+    _, _, transformed_opt_out = subtitles.transform_subtitles(
+        (SelectedTrack(track_enm, target),),
+        ("en",),
+        title_for=lambda _selected: "Sub",
+        target_source=target,
+        treat_enm_as_english=False,
+    )
+    assert transformed_opt_out == set()
+
+
+def test_transform_subtitles_skips_duplicate_container_fonts_when_source_keeps_ass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = tmp_path / "target.mkv"
+    restyled_track = cast(
+        TrackInfo,
+        SimpleNamespace(
+            codec_name="ass",
+            relative_index=0,
+            index=2,
+            sanitized_lang=_Language("en"),
+            language="en",
+            title=None,
+            is_default=True,
+            is_forced=False,
+        ),
+    )
+    passthrough_ass = cast(
+        TrackInfo,
+        SimpleNamespace(
+            codec_name="ass",
+            relative_index=1,
+            index=3,
+            sanitized_lang=_Language("fr"),
+            language="fr",
+            title=None,
+            is_default=False,
+            is_forced=False,
+        ),
+    )
+    container_font = tmp_path / "styx-fonts" / "1_ContainerFont.ttf"
+    copied_container_font = tmp_path / "ContainerFont.ttf"
+    system_font = tmp_path / "GandhiSans.otf"
+    container_font.parent.mkdir(parents=True)
+    container_font.write_bytes(b"container-font-bytes")
+    copied_container_font.write_bytes(b"container-font-bytes")
+    system_font.write_bytes(b"gandhi-font-bytes")
+
+    class FontSub(_Subtitle):
+        def collect_fonts(self, **_kwargs: Any) -> list[Any]:
+            return [SimpleNamespace(file=copied_container_font), SimpleNamespace(file=system_font)]
+
+    monkeypatch.setattr(subtitles.SubFile, "from_mkv", lambda *_args, **_kwargs: FontSub())
+    monkeypatch.setattr(subtitles, "_replace_unknown_styles", lambda _subtitle: None)
+    monkeypatch.setattr(subtitles, "_repair_layout_resolution", lambda _subtitle: None)
+    monkeypatch.setattr(subtitles, "_extract_font_attachments", lambda _source: [container_font])
+
+    _, fonts, _ = subtitles.transform_subtitles(
+        (SelectedTrack(restyled_track, source), SelectedTrack(passthrough_ass, source)),
+        ("en",),
+        title_for=lambda _selected: "Sub",
+        target_source=source,
+    )
+    assert [font.file for font in fonts] == [system_font]

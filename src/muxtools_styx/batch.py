@@ -8,9 +8,11 @@ and for callers that want to review all collisions before starting a batch.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from muxtools import warn
 
 from .matching import EpisodeKey, _index_episode_paths, format_episode, match_episode_paths, parse_episode_key, scan_media_files
 
@@ -56,11 +58,12 @@ class BatchPreflight:
 
     @property
     def ok(self) -> bool:
+        unskipped_parse_failures = set(self.parse_failures) - set(self.skipped)
         return not (
             self.ambiguous_targets
             or self.ambiguous_donors
             or self.output_collisions
-            or self.parse_failures
+            or unskipped_parse_failures
             or (self.unmatched_targets and not self.skipped)
         )
 
@@ -70,8 +73,9 @@ class BatchPreflight:
             problems.append(f"ambiguous target episodes: {', '.join(sorted(self.ambiguous_targets))}")
         if self.ambiguous_donors:
             problems.append(f"ambiguous donor episodes: {', '.join(sorted(self.ambiguous_donors))}")
-        if self.parse_failures:
-            problems.append(f"unparseable media files: {', '.join(path.name for path in self.parse_failures)}")
+        unskipped_parse_failures = [path for path in self.parse_failures if path not in self.skipped]
+        if unskipped_parse_failures:
+            problems.append(f"unparseable media files: {', '.join(path.name for path in unskipped_parse_failures)}")
         if self.unmatched_targets and not self.skipped:
             problems.append(f"unmatched targets: {', '.join(path.name for path in self.unmatched_targets)}")
         if self.output_collisions:
@@ -86,6 +90,7 @@ class BatchPreflight:
             "ambiguous_targets": {key: [str(path) for path in paths] for key, paths in self.ambiguous_targets.items()},
             "ambiguous_donors": {key: [str(path) for path in paths] for key, paths in self.ambiguous_donors.items()},
             "skipped": [str(path) for path in self.skipped],
+            "outputs": [str(path) for path in self.outputs],
             "output_collisions": [str(path) for path in self.output_collisions],
             "parse_failures": [str(path) for path in self.parse_failures],
         }
@@ -109,21 +114,19 @@ def _default_output_path(target: Path, output_dir: Path | None) -> Path:
     return (output_dir / f"{target.stem}.mkv") if output_dir is not None else target.with_suffix(".mkv")
 
 
-def preflight_batch(
+def _discover_batch(
     target_dir: str | Path,
     *,
     donor_dir: str | Path | None = None,
     donor_season: int | None = None,
     episode_offset: int = 0,
     skip_unmatched: bool = False,
-    output_dir: str | Path | None = None,
-    output_resolver: Callable[[BatchMatch], Path] | None = None,
-    overwrite: bool = False,
 ) -> BatchPreflight:
-    """Discover files and validate every match before expensive mux work."""
-
     if donor_season is not None and donor_dir is None:
         raise ValueError("donor_season requires a donor directory")
+    if episode_offset != 0 and donor_dir is None:
+        warn("episode_offset is ignored without a donor directory.", preflight_batch)
+
     target_root = Path(target_dir)
     targets = scan_media_files(target_root)
     donor_root = Path(donor_dir) if donor_dir is not None else None
@@ -146,23 +149,9 @@ def preflight_batch(
         unused_donors = tuple(unused_donor)
         ambiguous_targets = _as_tuple_map(ambiguous_target)
         ambiguous_donors = _as_tuple_map(ambiguous_donor)
-        parse_failures = tuple(path for path in (*unmatched_target, *unused_donor) if not _has_episode(path))
+        parse_failures = tuple(path for path in unmatched_target if not _has_episode(path))
 
     skipped = unmatched_targets if skip_unmatched else ()
-    outputs = [
-        Path(output_resolver(match))
-        if output_resolver is not None
-        else _default_output_path(match.target, Path(output_dir) if output_dir is not None else None)
-        for match in matches
-    ]
-    collisions: list[Path] = []
-    seen: set[Path] = set()
-    for output in outputs:
-        resolved = output.resolve()
-        if resolved in seen or (resolved.exists() and not overwrite):
-            collisions.append(output)
-        seen.add(resolved)
-
     return BatchPreflight(
         matches=matches,
         unmatched_targets=unmatched_targets,
@@ -170,14 +159,72 @@ def preflight_batch(
         ambiguous_targets=ambiguous_targets,
         ambiguous_donors=ambiguous_donors,
         skipped=skipped,
-        outputs=tuple(outputs),
-        output_collisions=tuple(collisions),
         parse_failures=parse_failures,
     )
 
 
-def _has_episode(path: Path) -> bool:
+def _check_output_collisions(
+    matches: tuple[BatchMatch, ...],
+    outputs: list[Path],
+    *,
+    overwrite: bool,
+    options: MuxOptions | None = None,
+) -> tuple[Path, ...]:
+    from .mux import can_edit_in_place
 
+    collisions: list[Path] = []
+    seen: set[Path] = set()
+    for match, output in zip(matches, outputs, strict=True):
+        resolved = output.expanduser().resolve()
+        target_resolved = match.target.expanduser().resolve()
+        donor_resolved = match.donor.expanduser().resolve() if match.donor is not None else None
+        in_place = (
+            options is not None
+            and match.target.suffix.casefold() == ".mkv"
+            and can_edit_in_place(options, match.donor, output, match.target, allow_implicit_in_place=False)
+        )
+        hits_donor = donor_resolved is not None and resolved == donor_resolved
+        hits_target_illegally = resolved == target_resolved and not in_place
+        exists_blocked = resolved.exists() and not overwrite and not in_place
+        if resolved in seen or hits_donor or hits_target_illegally or exists_blocked:
+            collisions.append(output)
+        seen.add(resolved)
+    return tuple(collisions)
+
+
+def preflight_batch(
+    target_dir: str | Path,
+    *,
+    donor_dir: str | Path | None = None,
+    donor_season: int | None = None,
+    episode_offset: int = 0,
+    skip_unmatched: bool = False,
+    output_dir: str | Path | None = None,
+    output_resolver: Callable[[BatchMatch], Path] | None = None,
+    overwrite: bool = False,
+) -> BatchPreflight:
+    """Discover files and validate every match before expensive mux work."""
+
+    if output_dir is not None and output_resolver is not None:
+        warn("output_dir is ignored when output_resolver is provided.", preflight_batch)
+    preflight = _discover_batch(
+        target_dir,
+        donor_dir=donor_dir,
+        donor_season=donor_season,
+        episode_offset=episode_offset,
+        skip_unmatched=skip_unmatched,
+    )
+    outputs = [
+        Path(output_resolver(match))
+        if output_resolver is not None
+        else _default_output_path(match.target, Path(output_dir) if output_dir is not None else None)
+        for match in preflight.matches
+    ]
+    collisions = _check_output_collisions(preflight.matches, outputs, overwrite=overwrite)
+    return replace(preflight, outputs=tuple(outputs), output_collisions=collisions)
+
+
+def _has_episode(path: Path) -> bool:
     return parse_episode_key(path) is not None
 
 
@@ -208,10 +255,31 @@ def process_batch(
 
     if episode_padding < 2:
         raise ValueError("episode_padding must be at least 2")
+    if output_dir is not None and output_resolver is not None:
+        warn("output_dir is ignored when output_resolver is provided.", process_batch)
     mux_options = options or MuxOptions()
-    validate_options(mux_options, Path(donor_dir) if donor_dir is not None else None)
+    validate_options(
+        mux_options,
+        Path(donor_dir) if donor_dir is not None else None,
+        donor_supplemental_info=donor_supplemental_info,
+    )
 
-    def resolve_output(match: BatchMatch) -> Path:
+    preflight = _discover_batch(
+        target_dir,
+        donor_dir=donor_dir,
+        donor_season=donor_season,
+        episode_offset=episode_offset,
+        skip_unmatched=skip_unmatched,
+    )
+    if not preflight.ok:
+        raise BatchValidationError(preflight)
+
+    parsed_cache: dict[Path, tuple[ParsedFile, ParsedFile | None, Selection]] = {}
+    outputs: list[Path] = []
+    for match in preflight.matches:
+        if output_resolver is None and dry_run:
+            outputs.append(_default_output_path(match.target, Path(output_dir) if output_dir is not None else None))
+            continue
         target_info = ParsedFile.from_file(match.target, process_batch)
         donor_info = ParsedFile.from_file(match.donor, process_batch) if match.donor else None
         selection = select_tracks(
@@ -220,31 +288,36 @@ def process_batch(
             mux_options,
             target_supplemental_info=supplemental_info,
             donor_supplemental_info=donor_supplemental_info,
+            warn_unused=False,
         )
+        parsed_cache[match.target] = (target_info, donor_info, selection)
         if output_resolver is None:
-            return _default_output_path(match.target, Path(output_dir) if output_dir is not None else None)
-        return output_resolver(match, target_info, selection)
+            outputs.append(_default_output_path(match.target, Path(output_dir) if output_dir is not None else None))
+        else:
+            outputs.append(Path(output_resolver(match, target_info, selection)))
 
-    preflight = preflight_batch(
-        target_dir,
-        donor_dir=donor_dir,
-        donor_season=donor_season,
-        episode_offset=episode_offset,
-        skip_unmatched=skip_unmatched,
-        output_dir=output_dir,
-        output_resolver=resolve_output,
-        overwrite=overwrite,
-    )
+    collisions = _check_output_collisions(preflight.matches, outputs, overwrite=overwrite, options=mux_options)
+    preflight = replace(preflight, outputs=tuple(outputs), output_collisions=collisions)
     if not preflight.ok:
         raise BatchValidationError(preflight)
     if dry_run:
         return preflight
 
-    from .mux import process_mux
+    from .mux import can_edit_in_place, process_mux
 
-    outputs: list[Path] = []
+    multi_season = len({match.episode.season for match in preflight.matches}) > 1
+    results: list[Path] = []
     for match, output in zip(preflight.matches, preflight.outputs, strict=True):
-        if setup_factory is not None:
+        in_place = can_edit_in_place(mux_options, match.donor, output, match.target, allow_implicit_in_place=False)
+        explicit_title: str | None = None
+        if in_place:
+            if mux_options.transforms.fix_tags:
+                from .matching import parse_filename
+
+                info = parse_filename(match.target)
+                ep_str = format_episode(match.episode.number, episode_padding)
+                explicit_title = f"{info.title or match.target.stem} - {ep_str}"
+        elif setup_factory is not None:
             setup_factory(match, output)
         else:
             from muxtools import Setup
@@ -252,13 +325,17 @@ def process_batch(
             from .matching import parse_filename
 
             info = parse_filename(match.target)
+            ep_str = format_episode(match.episode.number, episode_padding)
+            workdir_name = match.episode.label() if multi_season else ep_str
             Setup(
-                episode=format_episode(match.episode.number, episode_padding),
-                config_file="",
+                episode=ep_str,
                 show_name=info.title or match.target.stem,
                 out_dir=str(output.parent),
                 out_name=output.name,
+                clean_work_dirs=True,
+                work_dir=str(Path.cwd() / "_workdir" / workdir_name),
             )
+        cached = parsed_cache.get(match.target)
         result = process_mux(
             match.target,
             donor=match.donor,
@@ -267,9 +344,15 @@ def process_batch(
             options=mux_options,
             outfile=output,
             overwrite=overwrite,
+            allow_implicit_in_place=False,
+            explicit_mkv_title=explicit_title,
+            _target_info=cached[0] if cached else None,
+            _donor_info=cached[1] if cached else None,
+            _selection=cached[2] if cached else None,
+            _warn_options=False,
         )
-        outputs.append(Path(result))
-    return BatchResult(tuple(outputs), preflight.skipped, preflight)
+        results.append(Path(result))
+    return BatchResult(tuple(results), preflight.skipped, preflight)
 
 
 __all__ = [

@@ -24,11 +24,17 @@ def track_bitrate(track: TrackInfo) -> int | None:
         return None
 
 
-def audio_tier(selected: SelectedTrack) -> tuple[int, int]:
-    """Return the deliberately narrow Japanese web-audio preference tier."""
+def audio_tier(selected: SelectedTrack) -> tuple[int, int] | None:
+    """Return the Japanese audio preference tier, or None for unclassified codecs."""
     audio_format = selected.track.get_audio_format()
-    bitrate = track_bitrate(selected.track) or 0
+    bitrate = track_bitrate(selected.track)
+    if audio_format is None:
+        return None
+    if not audio_format.is_lossy:
+        return (5, 0)
     if audio_format in (AudioFormat.AAC, AudioFormat.AAC_XHE):
+        if bitrate is None:
+            return None
         if bitrate > 192_000:
             return (4, bitrate)
         if bitrate >= 176_000:
@@ -36,12 +42,19 @@ def audio_tier(selected: SelectedTrack) -> tuple[int, int]:
         return (1, bitrate)
     if audio_format in (AudioFormat.EAC3, AudioFormat.EAC3_ATMOS):
         if source_label(selected.source_file, selected.supplemental_info) == "Amazon":
-            return (2, bitrate)
-        return (0, 0)
-    return (0, 0)
+            return (2, bitrate or 0)
+        return None
+    return None
 
 
 def choose_best_japanese(candidates: list[SelectedTrack]) -> SelectedTrack:
     if not candidates:
         raise ValueError("cannot choose from an empty audio candidate list")
-    return max(enumerate(candidates), key=lambda item: (*audio_tier(item[1]), -item[0]))[1]
+    tiered = [(index, candidate, audio_tier(candidate)) for index, candidate in enumerate(candidates)]
+    lossless = [(index, candidate, tier) for index, candidate, tier in tiered if tier is not None and tier[0] >= 5]
+    if lossless:
+        return max(lossless, key=lambda item: (*item[2], -item[0]))[1]
+    if tiered[0][2] is None:
+        return candidates[0]
+    classified = [(index, candidate, tier) for index, candidate, tier in tiered if tier is not None]
+    return max(classified, key=lambda item: (*item[2], -item[0]))[1]

@@ -26,9 +26,9 @@ The important source-policy flags are:
 - `--best-audio`: retain one Japanese candidate using the deliberately narrow web-audio preference documented in the source.
 - `--remove-unnecessary`: retain only configured audio/subtitle languages.
 
-`--audio-sync` and `--sub-sync` are independent donor offsets in milliseconds. `--restyle-subs` applies the Styx Gandhi-family cleanup to selected ASS tracks. `--fix-tags` repairs technical metadata and flags; `--normalize-track-names` separately normalizes user-facing audio/subtitle titles. `--tpp` is currently a documented no-op and emits one warning.
+`--audio-sync` and `--sub-sync` are independent donor offsets in milliseconds. `--restyle-subs` applies the Styx Gandhi-family cleanup to selected ASS tracks. `--fix-tags` repairs technical metadata and flags; `--normalize-track-names` separately normalizes user-facing audio/subtitle titles. `--tpp` is currently a documented no-op and emits one warning. `enm` (Honorifics) tracks are treated as English by default for selection and restyling; pass `--no-treat-enm-as-english` to opt out.
 
-A donor-free `mux` using only `--fix-tags`, `--normalize-track-names`, or both edits an MKV in place with `mkvpropedit` when `-o` is omitted or points to the input file. Any other policy, or a distinct output path, uses the normal remux path.
+A donor-free `mux` using only `--fix-tags`, `--normalize-track-names`, or both edits an MKV in place with `mkvpropedit` when `-o` points to the input file or when `-o`, `--out-dir`, and `--out-name` are all omitted. Any other policy, or any explicit output location, uses the normal remux path.
 
 `--supplemental-info TEXT` supplies extra target filename metadata for source provenance when the filename itself has no recognized service. `--donor-supplemental-info TEXT` does the same for a donor. A recognized source in the actual filename takes precedence.
 
@@ -58,7 +58,6 @@ from muxtools_styx import MuxOptions, TrackOptions, process_mux
 
 Setup(
     episode="03",
-    config_file="",
     show_name="Sousou no Frieren",
     out_dir="muxed",
     out_name="[Group] $show$ - $ep$ [$res$]",

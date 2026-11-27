@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .selection import SelectedTrack
+from .selection import SelectedTrack, mkvmerge_track_id
 
 
 def sync_arguments(tracks: list[SelectedTrack], delay: int) -> list[str]:
@@ -8,5 +8,5 @@ def sync_arguments(tracks: list[SelectedTrack], delay: int) -> list[str]:
         return []
     args: list[str] = []
     for selected in tracks:
-        args.extend(("--sync", f"{selected.track.index}:{delay}"))
+        args.extend(("--sync", f"{mkvmerge_track_id(selected.track)}:{delay}"))
     return args

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from langcodes import Language
-from muxtools import ParsedFile, TrackInfo, TrackType
+from muxtools import ParsedFile, TrackInfo, TrackType, warn
 from muxtools.utils.language_util import standardize_tag
 
 from .audio import choose_best_japanese
@@ -15,6 +15,7 @@ from .audio import choose_best_japanese
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+_SIGNS_FORCED_RE = re.compile(r"\b(?:signs?|songs?|forced?)\b", re.IGNORECASE)
 _SDH_TITLE_RE = re.compile(r"(?<![a-z0-9])sdh(?![a-z0-9])", re.IGNORECASE)
 _CC_TITLE_RE = re.compile(r"(?<![a-z0-9])(?:cc|closed[\s-]?captions?)(?![a-z0-9])", re.IGNORECASE)
 _HI_TITLE_RE = re.compile(
@@ -59,6 +60,7 @@ class MuxOptions:
     tracks: TrackOptions = field(default_factory=TrackOptions)
     transforms: TransformOptions = field(default_factory=TransformOptions)
     sync: SyncOptions = field(default_factory=SyncOptions)
+    treat_enm_as_english: bool = True
 
 
 @dataclass(frozen=True)
@@ -86,8 +88,13 @@ def canonical_language_tag(language: str) -> str:
 
 
 def is_signs_or_forced(track: TrackInfo) -> bool:
-    title = (track.title or "").casefold()
-    return bool(getattr(track, "is_forced", False)) or any(word in title for word in ("sign", "song", "forced"))
+    title = str(getattr(track, "title", None) or "")
+    return bool(getattr(track, "is_forced", False)) or str(getattr(track, "forced", "")).casefold() == "yes" or bool(_SIGNS_FORCED_RE.search(title))
+
+
+def mkvmerge_track_id(track: TrackInfo) -> int:
+    raw_id = getattr(getattr(track, "raw_mkvmerge", None), "id", None)
+    return int(raw_id) if raw_id is not None else track.index
 
 
 def _disposition_flag(track: TrackInfo, name: str) -> bool:
@@ -98,6 +105,10 @@ def _disposition_flag(track: TrackInfo, name: str) -> bool:
     if isinstance(disposition, Mapping):
         return bool(disposition.get(name, 0))
     return bool(getattr(disposition, name, 0))
+
+
+def _is_attached_pic(track: TrackInfo) -> bool:
+    return _disposition_flag(track, "attached_pic")
 
 
 def has_hearing_impaired_flag(track: TrackInfo) -> bool:
@@ -140,7 +151,15 @@ def is_audio_companion_subtitle(track: TrackInfo) -> bool:
     return is_signs_or_forced(track) or is_cc_or_sdh(track) or is_dubtitle(track)
 
 
-def languages_match(query: Language, candidate: Language, *, allow_broader: bool = False) -> bool:
+def _effective_language(language: Language, *, treat_enm_as_english: bool = True) -> Language:
+    if treat_enm_as_english and language.language == "enm":
+        return Language.get("en")
+    return language
+
+
+def languages_match(query: Language, candidate: Language, *, allow_broader: bool = False, treat_enm_as_english: bool = True) -> bool:
+    query = _effective_language(query, treat_enm_as_english=treat_enm_as_english)
+    candidate = _effective_language(candidate, treat_enm_as_english=treat_enm_as_english)
     if query == candidate:
         return True
     if not query.language or query.language != candidate.language:
@@ -154,24 +173,40 @@ def languages_match(query: Language, candidate: Language, *, allow_broader: bool
     return query.distance(candidate) == 0
 
 
+def languages_equivalent(first: str, second: str, *, treat_enm_as_english: bool = True) -> bool:
+    return languages_match(Language.get(first), Language.get(second), allow_broader=True, treat_enm_as_english=treat_enm_as_english)
+
+
 def canonical_languages(languages: Iterable[str]) -> tuple[Language, ...]:
     return tuple(Language.get(canonical_language_tag(language)) for language in languages)
 
 
-def matches_any_language(track: TrackInfo, languages: Iterable[Language], *, allow_broader: bool = False) -> bool:
+def matches_any_language(track: TrackInfo, languages: Iterable[Language], *, allow_broader: bool = False, treat_enm_as_english: bool = True) -> bool:
     candidate = Language.get(canonical_language(track))
-    return any(languages_match(query, candidate, allow_broader=allow_broader) for query in languages)
+    return any(languages_match(query, candidate, allow_broader=allow_broader, treat_enm_as_english=treat_enm_as_english) for query in languages)
 
 
-def _language_matches_audio(track_language: str, audio_languages: set[str]) -> bool:
+def _language_matches_audio(track_language: str, audio_languages: set[str], *, treat_enm_as_english: bool = True) -> bool:
     if track_language in audio_languages:
         return True
     track_lang = Language.get(track_language)
-    return any(languages_match(Language.get(audio_language), track_lang, allow_broader=True) for audio_language in audio_languages)
+    return any(
+        languages_match(Language.get(audio_language), track_lang, allow_broader=True, treat_enm_as_english=treat_enm_as_english)
+        for audio_language in audio_languages
+    )
+
+
+def _is_english(track: TrackInfo, *, treat_enm_as_english: bool = True) -> bool:
+    base = canonical_language(track).split("-", 1)[0]
+    return base == "en" or (treat_enm_as_english and base == "enm")
 
 
 def _select(parsed: ParsedFile, kind: TrackType, supplemental_info: str | None) -> list[SelectedTrack]:
-    return [SelectedTrack(track, parsed.source, supplemental_info) for track in parsed.find_tracks(type=kind)]
+    return [
+        SelectedTrack(track, parsed.source, supplemental_info)
+        for track in parsed.find_tracks(type=kind)
+        if kind != TrackType.VIDEO or not _is_attached_pic(track)
+    ]
 
 
 def _dedupe(tracks: Iterable[SelectedTrack]) -> list[SelectedTrack]:
@@ -185,11 +220,18 @@ def _dedupe(tracks: Iterable[SelectedTrack]) -> list[SelectedTrack]:
     return result
 
 
-def validate_options(options: MuxOptions, donor: Path | None) -> None:
+def validate_options(
+    options: MuxOptions,
+    donor: Path | None,
+    *,
+    target: Path | None = None,
+    donor_supplemental_info: str | None = None,
+    warn_unused: bool = True,
+) -> None:
     tracks = options.tracks
     if tracks.keep_audio and tracks.fill_audio:
         raise ValueError("keep_audio and fill_audio cannot be used together")
-    donor_flags = (
+    donor_required_flags = (
         tracks.keep_video,
         tracks.keep_audio,
         tracks.fill_audio,
@@ -199,8 +241,14 @@ def validate_options(options: MuxOptions, donor: Path | None) -> None:
         options.sync.audio_sync != 0,
         options.sync.sub_sync != 0,
     )
-    if donor is None and any(donor_flags):
+    if donor is None and any(donor_required_flags):
         raise ValueError("the selected policy requires a donor file")
+    if donor is not None and target is not None and donor.expanduser().resolve() == target.expanduser().resolve():
+        raise ValueError("donor file cannot be the same as target file")
+    if warn_unused and donor is None and donor_supplemental_info:
+        warn("donor_supplemental_info is ignored without a donor file.", validate_options)
+    if warn_unused and donor is not None and not (any(donor_required_flags) or tracks.best_audio):
+        warn("A donor file was provided, but no donor-using policy is active; donor will be ignored.", validate_options)
 
 
 def select_tracks(
@@ -210,21 +258,32 @@ def select_tracks(
     *,
     target_supplemental_info: str | None = None,
     donor_supplemental_info: str | None = None,
+    warn_unused: bool = True,
 ) -> Selection:
-    validate_options(options, donor.source if donor else None)
+    validate_options(
+        options,
+        donor.source if donor else None,
+        target=target.source,
+        donor_supplemental_info=donor_supplemental_info,
+        warn_unused=warn_unused,
+    )
     policy = options.tracks
+    enm = options.treat_enm_as_english
 
     target_video = _select(target, TrackType.VIDEO, target_supplemental_info)
     target_audio = _select(target, TrackType.AUDIO, target_supplemental_info)
     target_subs = [] if policy.discard_new_subs else _select(target, TrackType.SUB, target_supplemental_info)
-    if len(target_video) != 1:
+    if not policy.keep_video and len(target_video) != 1:
         raise ValueError(f"target must contain exactly one video track: {target.source}")
-    if not target_audio:
+    donor_can_supply_audio = donor is not None and (policy.keep_audio or policy.fill_audio or policy.best_audio)
+    if not target_audio and not donor_can_supply_audio:
         raise ValueError(f"target has no audio track: {target.source}")
 
     video = target_video
     audio = target_audio
     subtitles = target_subs
+    donor_audio: list[SelectedTrack] = []
+    fill_companion_keys: set[tuple[Path, int]] = set()
 
     if donor is not None:
         donor_video = _select(donor, TrackType.VIDEO, donor_supplemental_info)
@@ -236,50 +295,85 @@ def select_tracks(
                 raise ValueError(f"donor must contain exactly one video track: {donor.source}")
             video = donor_video
 
-        donor_sub_selection: list[SelectedTrack] = []
+        introduced_langs: set[str] = set()
         if policy.keep_audio:
             audio = _dedupe([*audio, *donor_audio])
         elif policy.fill_audio:
-            present = {canonical_language(item.track) for item in audio}
-            introduced = {canonical_language(item.track) for item in donor_audio} - present
-            audio.extend(item for item in donor_audio if canonical_language(item.track) in introduced)
-            donor_sub_selection.extend(
+            present_audio = [canonical_language(item.track) for item in audio]
+            introduced_audio = [
                 item
-                for item in donor_subs
-                if _language_matches_audio(canonical_language(item.track), introduced) and is_audio_companion_subtitle(item.track)
-            )
+                for item in donor_audio
+                if not any(languages_equivalent(canonical_language(item.track), existing, treat_enm_as_english=enm) for existing in present_audio)
+            ]
+            introduced_langs = {canonical_language(item.track) for item in introduced_audio}
+            audio.extend(introduced_audio)
 
         if policy.keep_subs:
-            donor_sub_selection = donor_subs
+            donor_sub_selection = list(donor_subs)
         else:
-            if policy.keep_subs_missing_languages:
-                present_subs = {canonical_language(item.track) for item in subtitles}
-                donor_sub_selection.extend(item for item in donor_subs if canonical_language(item.track) not in present_subs)
-            if policy.keep_non_english:
-                donor_sub_selection.extend(item for item in donor_subs if canonical_language(item.track).split("-", 1)[0] != "en")
+            present_any_subs = [canonical_language(item.track) for item in subtitles]
+            present_full_subs = [canonical_language(item.track) for item in subtitles if not is_audio_companion_subtitle(item.track)]
+            donor_sub_selection = []
+            for item in donor_subs:
+                lang = canonical_language(item.track)
+                is_companion = is_audio_companion_subtitle(item.track)
+                take_for_fill = policy.fill_audio and is_companion and _language_matches_audio(lang, introduced_langs, treat_enm_as_english=enm)
+                existing_for_missing = present_any_subs if is_companion else present_full_subs
+                take_for_missing = policy.keep_subs_missing_languages and not any(
+                    languages_equivalent(lang, existing, treat_enm_as_english=enm) for existing in existing_for_missing
+                )
+                take_for_non_en = policy.keep_non_english and not _is_english(item.track, treat_enm_as_english=enm)
+                if take_for_fill:
+                    fill_companion_keys.add((item.source_file, item.track.index))
+                if take_for_fill or take_for_missing or take_for_non_en:
+                    donor_sub_selection.append(item)
         subtitles = _dedupe([*subtitles, *donor_sub_selection])
 
     if policy.best_audio:
         japanese = [item for item in audio if canonical_language(item.track).split("-", 1)[0] == "ja"]
+        if donor is not None:
+            donor_japanese = [item for item in donor_audio if canonical_language(item.track).split("-", 1)[0] == "ja"]
+            japanese = _dedupe([*japanese, *donor_japanese])
         if japanese:
             winner = choose_best_japanese(japanese)
-            audio = [item for item in audio if item not in japanese or item == winner]
+            existing_ja = [item for item in audio if canonical_language(item.track).split("-", 1)[0] == "ja"]
+            if existing_ja:
+                first_index = audio.index(existing_ja[0])
+                audio = [item for item in audio if item not in existing_ja]
+                audio.insert(first_index, winner)
+            else:
+                audio.append(winner)
 
     if policy.remove_unnecessary:
         audio_languages = canonical_languages(policy.audio_languages)
         sub_languages = canonical_languages(policy.sub_languages)
-        audio = [item for item in audio if matches_any_language(item.track, audio_languages)]
+        audio = [item for item in audio if matches_any_language(item.track, audio_languages, treat_enm_as_english=enm)]
         kept_audio_languages = {canonical_language(item.track) for item in audio}
         subtitles = [
             item
             for item in subtitles
-            if matches_any_language(item.track, sub_languages)
-            or (is_audio_companion_subtitle(item.track) and _language_matches_audio(canonical_language(item.track), kept_audio_languages))
+            if (
+                _language_matches_audio(canonical_language(item.track), kept_audio_languages, treat_enm_as_english=enm)
+                if is_audio_companion_subtitle(item.track)
+                else matches_any_language(item.track, sub_languages, treat_enm_as_english=enm)
+            )
         ]
 
     if not video:
         raise ValueError("selection removed every video track")
     if not audio:
         raise ValueError("selection removed every audio track")
+
+    if donor is not None:
+        if options.sync.audio_sync != 0 and not any(item.source_file == donor.source for item in audio):
+            warn("audio_sync was set, but no donor audio track was selected.", select_tracks)
+        if options.sync.sub_sync != 0 and not any(item.source_file == donor.source for item in subtitles):
+            warn("sub_sync was set, but no donor subtitle track was selected.", select_tracks)
+        if (
+            options.sync.audio_sync != 0
+            and options.sync.sub_sync == 0
+            and any((item.source_file, item.track.index) in fill_companion_keys for item in subtitles)
+        ):
+            warn("fill_audio imported donor companion subtitles while audio_sync is non-zero and sub_sync is 0.", select_tracks)
 
     return Selection(tuple(video), tuple(audio), tuple(subtitles), target.source)
