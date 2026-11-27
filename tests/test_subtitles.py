@@ -64,6 +64,7 @@ def test_restyled_subtitle_does_not_reapply_container_delay(monkeypatch: pytest.
     monkeypatch.setattr(subtitles, "_replace_unknown_styles", lambda _subtitle: None)
     monkeypatch.setattr(subtitles, "_repair_layout_resolution", lambda _subtitle: None)
     monkeypatch.setattr(subtitles, "_extract_font_attachments", lambda _source: [])
+    monkeypatch.setattr(subtitles, "collect_fonts", lambda *_args, **_kwargs: [])
 
     tracks, _, _ = subtitles.transform_subtitles(
         (SelectedTrack(track, source),),
@@ -95,6 +96,7 @@ def test_restyled_donor_subtitle_applies_only_manual_sync(monkeypatch: pytest.Mo
     monkeypatch.setattr(subtitles, "_replace_unknown_styles", lambda _subtitle: None)
     monkeypatch.setattr(subtitles, "_repair_layout_resolution", lambda _subtitle: None)
     monkeypatch.setattr(subtitles, "_extract_font_attachments", lambda _source: [])
+    monkeypatch.setattr(subtitles, "collect_fonts", lambda *_args, **_kwargs: [])
 
     tracks, _, _ = subtitles.transform_subtitles(
         (SelectedTrack(track, source),),
@@ -175,6 +177,7 @@ def test_transform_subtitles_matches_restyle_languages_unidirectionally(monkeypa
     monkeypatch.setattr(subtitles, "_replace_unknown_styles", lambda _subtitle: None)
     monkeypatch.setattr(subtitles, "_repair_layout_resolution", lambda _subtitle: None)
     monkeypatch.setattr(subtitles, "_extract_font_attachments", lambda _source: [])
+    monkeypatch.setattr(subtitles, "collect_fonts", lambda *_args, **_kwargs: [])
 
     _, _, transformed = subtitles.transform_subtitles(
         candidates,
@@ -212,6 +215,7 @@ def test_transform_subtitles_preserves_bcp47_subtag_without_fix_tags(monkeypatch
     monkeypatch.setattr(subtitles, "_replace_unknown_styles", lambda _subtitle: None)
     monkeypatch.setattr(subtitles, "_repair_layout_resolution", lambda _subtitle: None)
     monkeypatch.setattr(subtitles, "_extract_font_attachments", lambda _source: [])
+    monkeypatch.setattr(subtitles, "collect_fonts", lambda *_args, **_kwargs: [])
 
     subtitles.transform_subtitles(
         (SelectedTrack(track, source),),
@@ -267,10 +271,12 @@ def test_transform_subtitles_enm_opt_out_and_disambiguation(tmp_path: Path, monk
         shared.write_text(str(source), encoding="utf-8")
         return FileSub(shared)
 
+    collect_calls: list[int] = []
     monkeypatch.setattr(subtitles.SubFile, "from_mkv", fake_extract)
     monkeypatch.setattr(subtitles, "_replace_unknown_styles", lambda _subtitle: None)
     monkeypatch.setattr(subtitles, "_repair_layout_resolution", lambda _subtitle: None)
     monkeypatch.setattr(subtitles, "_extract_font_attachments", lambda _source: [])
+    monkeypatch.setattr(subtitles, "collect_fonts", lambda subs, **_kwargs: collect_calls.append(len(subs)) or [])
 
     _, _, transformed_default = subtitles.transform_subtitles(
         (SelectedTrack(track_enm, target), SelectedTrack(track_en, donor)),
@@ -279,6 +285,7 @@ def test_transform_subtitles_enm_opt_out_and_disambiguation(tmp_path: Path, monk
         target_source=target,
     )
     assert transformed_default == {(target, 2), (donor, 2)}
+    assert collect_calls == [2]
     assert len(set(extracted_paths)) == 2
     assert extracted_paths[0].read_text(encoding="utf-8") == str(target)
     assert extracted_paths[1].read_text(encoding="utf-8") == str(donor)
@@ -329,14 +336,15 @@ def test_transform_subtitles_skips_duplicate_container_fonts_when_source_keeps_a
     copied_container_font.write_bytes(b"container-font-bytes")
     system_font.write_bytes(b"gandhi-font-bytes")
 
-    class FontSub(_Subtitle):
-        def collect_fonts(self, **_kwargs: Any) -> list[Any]:
-            return [SimpleNamespace(file=copied_container_font), SimpleNamespace(file=system_font)]
-
-    monkeypatch.setattr(subtitles.SubFile, "from_mkv", lambda *_args, **_kwargs: FontSub())
+    monkeypatch.setattr(subtitles.SubFile, "from_mkv", lambda *_args, **_kwargs: _Subtitle())
     monkeypatch.setattr(subtitles, "_replace_unknown_styles", lambda _subtitle: None)
     monkeypatch.setattr(subtitles, "_repair_layout_resolution", lambda _subtitle: None)
     monkeypatch.setattr(subtitles, "_extract_font_attachments", lambda _source: [container_font])
+    monkeypatch.setattr(
+        subtitles,
+        "collect_fonts",
+        lambda *_args, **_kwargs: [SimpleNamespace(file=copied_container_font), SimpleNamespace(file=system_font)],
+    )
 
     _, fonts, _ = subtitles.transform_subtitles(
         (SelectedTrack(restyled_track, source), SelectedTrack(passthrough_ass, source)),

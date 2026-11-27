@@ -9,20 +9,22 @@ from muxtools import (
     GJM_GANDHI_PRESET,
     ASSHeader,
     FontFile,
-    ParsedFile,
+    MKVExtract,
     PathLike,
     SubFile,
     SubTrack,
+    collect_fonts,
     edit_style,
     gandhi_default,
-    get_executable,
     get_workdir,
-    run_commandline,
     warn,
 )
 
 from .metadata import FixedMetadata
 from .selection import SelectedTrack, canonical_languages, is_cc_or_sdh, matches_any_language
+
+_FONT_SUFFIXES = frozenset({".ttf", ".otf", ".ttc", ".otc"})
+_MKV_SUFFIXES = frozenset({".mkv", ".webm", ".mka", ".mks"})
 
 
 def _replace_unknown_styles(subtitle: SubFile) -> None:
@@ -57,24 +59,12 @@ def _repair_layout_resolution(subtitle: SubFile) -> None:
 
 
 def _extract_font_attachments(source: Path) -> list[PathLike]:
-    parsed = ParsedFile.from_file(source, _extract_font_attachments)
+    if source.suffix.casefold() not in _MKV_SUFFIXES:
+        return []
     source_key = hashlib.sha256(str(source.resolve()).encode()).hexdigest()[:12]
     destination = Path(get_workdir(), "styx-fonts", f"{source.stem}-{source_key}")
-    fonts: list[PathLike] = []
-    arguments = [get_executable("mkvextract"), str(source), "attachments"]
-    attachments = parsed.raw_mkvmerge.attachments if parsed.raw_mkvmerge else []
-    for attachment in attachments:
-        filename = attachment.file_name
-        suffix = Path(filename).suffix.casefold()
-        if suffix not in {".ttf", ".otf", ".ttc", ".otc"}:
-            continue
-        destination.mkdir(parents=True, exist_ok=True)
-        output = destination / f"{attachment.id}_{Path(filename).name}"
-        arguments.append(f"{attachment.id}:{output}")
-        fonts.append(output)
-    if fonts and run_commandline(arguments, quiet=True):
-        raise RuntimeError(f"failed to extract font attachments from {source}")
-    return fonts
+    attachments = MKVExtract(source, output=destination).attachments()
+    return [attachment.file for attachment in attachments if attachment.file.suffix.casefold() in _FONT_SUFFIXES]
 
 
 def _disambiguate_extracted_sub(subtitle: SubFile, source: Path, track_index: int) -> None:
@@ -113,6 +103,7 @@ def transform_subtitles(
     treat_enm_as_english: bool = True,
 ) -> tuple[list[SubTrack], list[FontFile], set[tuple[Path, int]]]:
     tracks: list[SubTrack] = []
+    restyled_subs: list[SubFile] = []
     fonts_by_key: dict[str, FontFile] = {}
     transformed: set[tuple[Path, int]] = set()
     attachment_fonts: dict[Path, list[PathLike]] = {}
@@ -157,15 +148,9 @@ def transform_subtitles(
         _replace_unknown_styles(subtitle)
         subtitle.clean_styles()
         _repair_layout_resolution(subtitle)
+        restyled_subs.append(subtitle)
         if item.source_file not in attachment_fonts:
             attachment_fonts[item.source_file] = _extract_font_attachments(item.source_file)
-        source_fonts = attachment_fonts[item.source_file]
-        for font in subtitle.collect_fonts(search_current_dir=False, additional_fonts=source_fonts):
-            resolved = font.file.resolve()
-            digest = _file_sha256(resolved)
-            if digest is not None and digest in kept_container_hashes:
-                continue
-            fonts_by_key[digest or str(resolved)] = font
         language = track.sanitized_lang.to_tag() or "und"
         default = track.is_default
         forced = track.is_forced
@@ -184,5 +169,14 @@ def transform_subtitles(
             output_track.delay += donor_delay
         tracks.append(output_track)
         transformed.add((item.source_file, track.index))
+
+    if restyled_subs:
+        all_source_fonts = [path for source_paths in attachment_fonts.values() for path in source_paths]
+        for font in collect_fonts(restyled_subs, search_current_dir=False, additional_fonts=all_source_fonts):
+            resolved = font.file.resolve()
+            digest = _file_sha256(resolved)
+            if digest is not None and digest in kept_container_hashes:
+                continue
+            fonts_by_key[digest or str(resolved)] = font
 
     return tracks, list(fonts_by_key.values()), transformed
